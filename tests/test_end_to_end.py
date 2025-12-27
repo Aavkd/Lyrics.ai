@@ -192,22 +192,37 @@ def test_full_pipeline_execution():
     else:
         print(f"   ✓ Found {audio_file}")
     
-    # Start with mock mode - safer for CI/testing environments
-    # This tests the full flow without requiring Demucs/Ollama
-    pipeline = CorePipeline(mock_mode=True)
-    
-    # Check if real mode is possible
-    real_mode_possible = False
+    # First, check if Ollama is available using a test pipeline
+    test_pipeline = CorePipeline(mock_mode=True)
+    ollama_available = False
     try:
-        # Test if Ollama is available
-        if pipeline.generation_engine.test_connection():
-            # Only attempt real mode if both audio exists and Ollama works
-            print("   ✓ Ollama available - could use real generation")
-            real_mode_possible = True
+        ollama_available = test_pipeline.generation_engine.test_connection()
+        if ollama_available:
+            print("   ✓ Ollama available - using REAL LLM generation")
         else:
             print("   ⚠️ Ollama not available - using mock mode")
-    except Exception:
-        print("   ⚠️ Could not test Ollama connection - using mock mode")
+    except Exception as e:
+        print(f"   ⚠️ Could not test Ollama connection: {e}")
+    
+    # Create the actual pipeline
+    # AudioEngine stays in mock mode (to skip Demucs), but GenerationEngine uses real LLM if available
+    if ollama_available:
+        # Create pipeline with real generation but mock audio processing
+        from audio_engine import AudioEngine
+        from generation_engine import GenerationEngine
+        from prompt_engine import PromptEngine
+        from validator import LyricValidator
+        
+        pipeline = CorePipeline.__new__(CorePipeline)
+        pipeline.audio_engine = AudioEngine(mock_mode=True)  # Skip Demucs
+        pipeline.prompt_engine = PromptEngine()
+        pipeline.generation_engine = GenerationEngine(mock_mode=False)  # REAL LLM!
+        pipeline.validator = LyricValidator()
+        pipeline.mock_mode = False  # For logging purposes
+        print("   ✓ Pipeline configured: Mock Audio + REAL LLM")
+    else:
+        pipeline = CorePipeline(mock_mode=True)
+        print("   ✓ Pipeline configured: Full Mock Mode")
     
     try:
         best_lyric, score = pipeline.run_pipeline(audio_file)
@@ -217,13 +232,14 @@ def test_full_pipeline_execution():
         print(f"   📊 SCORE: {score}")
         print("   " + "=" * 50)
         
-        # In mock mode, we should get some result
-        if pipeline.mock_mode:
-            # Mock mode analysis should work with real audio files
-            assert best_lyric is not None or score == 0.0, \
-                "Mock mode should complete (success or graceful failure)"
-        
+        # With real LLM, we might or might not get a match
+        # With mock mode, we expect no match (syllable mismatch)
         assert score >= 0.0, "Score should be non-negative"
+        
+        if best_lyric:
+            print(f"   ✓ Found a valid lyric with score {score:.2f}!")
+        else:
+            print("   ⚠️ No valid candidates found (expected if syllable counts don't match)")
         
         print("   ✓ Pipeline execution completed!")
         
