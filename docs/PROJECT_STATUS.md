@@ -8,7 +8,7 @@
 
 ## 📋 Executive Summary
 
-The Flow-to-Lyrics project is currently at approximately **25% completion** of the MVP roadmap from a **user perspective**. While backend infrastructure exists, the frontend is essentially a **read-only audio viewer** with no editing or generation capabilities.
+The Flow-to-Lyrics project is currently at approximately **45% completion** of the MVP roadmap from a **user perspective**. The backend pipeline is maturing with the completion of the Generation Engine (Step 3). The frontend remains a **read-only audio viewer** with no editing or generation capabilities.
 
 ### Current User Experience
 Users can only:
@@ -118,15 +118,21 @@ Users can only:
 | "Generate Many, Filter Best" strategy | Required | ✅ Logic exists in `phase0_blind_test.py` | ✅ Done |
 | g2p_en phonetic validation | Required | ✅ Fully implemented | ✅ Done |
 | Syllable counting (auditory) | Required | ✅ Works correctly | ✅ Done |
-| Stress pattern matching | Required | **Not implemented** | 🔴 Missing |
-| LLM integration (Groq/GPT-4) | Required | **Mock only** - no real LLM calls | 🔴 Missing |
-| Parallel 5-candidate generation | Required | Mock version exists | ⚠️ Partial |
+| Stress pattern matching | Required | ✅ Prompt Engine generates stress constraints | ⚠️ Partial |
+| LLM integration (Local Ollama) | Required | ✅ `GenerationEngine` with ministral-3 | ✅ Done |
+| Parallel 5-candidate generation | Required | ✅ Full pipeline: Prompt → Ollama → JSON parsing | ✅ Done |
 | Syllabic scoring (0 or 1) | Required | ✅ Implemented | ✅ Done |
 | Stress scoring (0.0 - 1.0) | Required | **Not implemented** | 🔴 Missing |
 | Retry with error-specific prompts | Required | **Not implemented** | 🔴 Missing |
+| **Prompt Engine (JSON→Prompt)** | Required | ✅ `PromptEngine` class with external templates | ✅ Done |
 
 **Files Involved**:
+- `generation_engine.py` → `GenerationEngine` class (Ollama HTTP integration)
 - `phase0_blind_test.py` → `SyllableValidator`, `LyricGenerator` classes
+- `prompt_engine.py` → `PromptEngine` class (JSON-to-Prompt translation)
+- `prompts/system_instruction.md` → System prompt with persona and few-shot examples
+- `prompts/user_template.md` → User prompt template with placeholders
+- `tests/test_generation.py` → Test suite for GenerationEngine
 
 **Test Results** (from Phase 0 changelog):
 | Target | Status | Selected Line |
@@ -165,8 +171,8 @@ Users can only:
 | Demucs | Required | ✅ Installed (mock mode) | ⚠️ Partial |
 | g2p_en | Required | ✅ Fully functional | ✅ Done |
 | nltk (CMU Dict) | Required | Not used directly | ⚠️ Partial |
-| Instructor/Outlines | Required for JSON | **Not implemented** | 🔴 Missing |
-| Groq/GPT-4 | Required | **Not implemented** | 🔴 Missing |
+| Instructor/Outlines | Required for JSON | Regex-based parsing in GenerationEngine | ⚠️ Alternative |
+| Local Ollama (ministral-3) | Required | ✅ Fully integrated | ✅ Done |
 
 ### Frontend (Next.js / React)
 
@@ -208,6 +214,7 @@ Based on the current frontend interface, users can perform **3 core actions only
 3. **BPM/Onset detection** - Librosa analysis (~5% BPM variance)
 4. **Phonetic syllable counting** - g2p_en works in `phase0_blind_test.py`
 5. **Mock LLM generation** - Test script only, no API integration
+6. **Prompt Engine** - `prompt_engine.py` translates PivotJSON to LLM prompts
 
 ---
 
@@ -258,11 +265,12 @@ The current waveform overlay is merely functional. The target design needs:
 
 ## 📅 Roadmap Progress
 
-### Phase 0: "Blind Test" (Weeks 1-2) → ⚠️ 60% Complete
+### Phase 0: "Blind Test" (Weeks 1-2) → ✅ 90% Complete
 - [x] Python script with syllable input
 - [x] g2p_en phonetic validation
 - [x] "Generate Many, Filter Best" logic
-- [ ] Real LLM integration (Groq/GPT-4)
+- [x] Prompt Engine (Step 2: JSON-to-Prompt translation)
+- [x] Real LLM integration (Local Ollama with ministral-3)
 - [ ] >90% rhythmic accuracy KPI
 
 ### Phase 1: Segmentation Tool (Weeks 3-4) → ✅ 95% Complete
@@ -286,13 +294,23 @@ The current waveform overlay is merely functional. The target design needs:
 ```
 Lyrics.ai/
 ├── main.py                     # FastAPI server (215 lines)
-├── audio_engine.py             # DSP logic: Demucs + Librosa (388 lines)
+├── audio_engine.py             # Step 1: DSP logic - Demucs + Librosa (523 lines)
+├── prompt_engine.py            # Step 2: JSON-to-Prompt translation (270 lines)
+├── generation_engine.py        # Step 3: Ollama LLM integration (330 lines)
 ├── phase0_blind_test.py        # Syllable validation (362 lines)
 ├── requirements.txt            # Python dependencies
-├── prd.md                      # Product Requirements Document
-├── PHASE0_CHANGELOG.md         # Phase 0 implementation notes
-├── PHASE1_CHANGELOG.md         # Phase 1 implementation notes
-├── PHASE2_CHANGELOG.md         # Phase 2 implementation notes
+├── prompts/                    # LLM prompt templates
+│   ├── system_instruction.md   # Persona + few-shot examples
+│   └── user_template.md        # Jinja2-style user prompt
+├── tests/
+│   ├── test_audio_analysis.py  # Step 1 tests
+│   ├── test_prompt_engine.py   # Step 2 tests
+│   └── test_generation.py      # Step 3 tests (Ollama integration)
+├── docs/                       # Documentation
+│   ├── prd.md                  # Product Requirements Document
+│   ├── PROJECT_STATUS.md       # This file
+│   ├── TECH_ROADMAP.md         # Technical roadmap
+│   └── ...                     # Changelog files
 └── frontend/
     ├── app/
     │   ├── page.tsx            # Main page layout

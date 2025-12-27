@@ -64,37 +64,67 @@ Why: Helps match lyric intonation to melody (e.g., a rising pitch suggests a que
 Objective: Translate the audio constraints into a language the LLM understands strictly.
 
 2.1 JSON-to-Prompt Converter
-Task: Create a function that reads the Pivot JSON and constructs a "Skeleton" prompt.
+Current Status: ✅ Completed
+
+Implementation:
+- `PromptEngine` class in `prompt_engine.py` (270 lines)
+- External templates in `prompts/` folder (.md files with Jinja2-style placeholders)
+- `_process_block()` method converts Block data to LLM-friendly formats
+- `construct_prompt()` returns (system_prompt, user_prompt) tuple
 
 Template Logic:
 
-Context: "You are a rapper writing lyrics to a specific flow."
+Context: "You are a skilled rap lyricist. Generate lyrics that match exact rhythmic constraints."
 
-Constraints: "The line must have exactly [X] syllables."
+Constraints: "Write a line with exactly [X] syllables."
 
-Stress Map: "The stress pattern is: [0, 1, 0, 1, 1] (0=weak, 1=strong). Match this rhythm."
+Stress Map: Converted to "DA-da-DA" notation (e.g., `[True, False, True]` → `"DA-da-DA"`)
 
-Vowel Constraints: "Syllable 4 is held long. Use an open vowel."
+Vowel Constraints: "Syllable [N] is long (sustained), use open vowels like 'fly', 'go', 'day'."
+
+Output Format: JSON `{"candidates": [...]}` for "Generate Many" strategy
 
 2.2 Few-Shot Examples
-Task: Hardcode 3-5 perfect examples of Input JSON -> Output Lyric in the system prompt to "teach" the model the format.
+Current Status: ✅ Completed
+
+Implementation:
+- 3 examples in `prompts/system_instruction.md`
+- Covers different syllable counts (4, 5, 6)
+- Shows stress pattern interpretation and sustained note handling
+- Optimized for Ministral-3b (concise, imperative instructions)
 
 🧠 Step 3: The Generation Engine (The "Brain")
 Objective: Generate high-volume candidates to ensure at least one fits the strict constraints.
 
 3.1 Connect Real LLM
-Current Status: Using Mock Generator.
+Current Status: ✅ Completed (Local Ollama with ministral-3)
 
-Implementation Requirement:
+Implementation:
+- `GenerationEngine` class in `generation_engine.py`
+- HTTP-based communication with Ollama (`requests` library, no custom dependencies)
+- Default endpoint: `http://localhost:11434/api/chat`
+- Model: `ministral-3` (configurable)
+- Temperature: 0.7 (balances creativity and adherence)
 
-Integrate Groq (Llama-3-70b) or OpenAI (GPT-4o-mini).
+3.2 Robust JSON Parsing
+Current Status: ✅ Completed
 
-Set temperature low (0.3 - 0.5) for adherence to structure.
+Implementation:
+- `_clean_and_parse_json()` method handles "chatty" 3B model output
+- Regex extraction: finds first `{` and last `}` to isolate JSON
+- Handles markdown code blocks (```json ... ```)
+- Fixes common LLM errors (trailing commas)
+- Fallback line splitting if JSON parsing fails completely
 
-3.2 Parallel Batching ("Generate Many")
-Strategy: Do not ask for 1 line. Ask for 10 lines in parallel (or one batch request asking for a JSON list of 10 variations).
+3.3 Parallel Batching ("Generate Many")
+Strategy: Request 5 candidate lines in a single JSON response.
 
-Why: Probability. If the model has a 30% chance of nailing the rhythm, generating 10 candidates gives a ~97% chance of success.
+Why: Probability. If the model has a 30% chance of nailing the rhythm, generating 5 candidates gives a ~83% chance of success.
+
+Test Results:
+- All 6 tests passed including real LLM generation
+- Real generation produces 5 candidates per request
+- JSON parsing correctly extracts from dirty model output
 
 🛡️ Step 4: The Gatekeeper (Validation Logic)
 Objective: ruthlessly filter out any candidate that doesn't strictly match the audio data. This is the "Neuro-Symbolic" part of the AI.
