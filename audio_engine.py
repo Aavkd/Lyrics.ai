@@ -32,6 +32,7 @@ class Segment:
     time_start: float
     duration: float
     is_stressed: bool = False
+    is_sustained: bool = False
 
 
 @dataclass
@@ -64,7 +65,8 @@ class PivotJSON:
                         {
                             "time_start": round(seg.time_start, 3),
                             "duration": round(seg.duration, 3),
-                            "is_stressed": seg.is_stressed
+                            "is_stressed": seg.is_stressed,
+                            "is_sustained": seg.is_sustained
                         }
                         for seg in block.segments
                     ]
@@ -81,6 +83,7 @@ class AnalysisResult:
     duration: float
     onset_times: list[float]
     sample_rate: int
+    audio_signal: np.ndarray = None  # Raw audio for amplitude analysis
 
 
 # =============================================================================
@@ -225,32 +228,144 @@ class LibrosaAnalyzer:
             tempo=tempo,
             duration=duration,
             onset_times=onset_times.tolist(),
-            sample_rate=sr
+            sample_rate=sr,
+            audio_signal=y
         )
 
 
 # =============================================================================
-# JSON PIVOT FORMATTER
+# JSON PIVOT FORMATTER (with Enhanced Audio Analysis)
 # =============================================================================
 
 class PivotFormatter:
     """
     Formats analysis results into the Pivot JSON structure.
+    
+    Enhanced with Step 1 of Tech Roadmap:
+    - Stress detection via RMS amplitude analysis
+    - Sustain detection via duration thresholds
     """
     
-    def __init__(self, default_segment_duration: float = 0.2):
+    def __init__(
+        self, 
+        default_segment_duration: float = 0.2,
+        stress_threshold: float = 1.2,
+        stress_window_size: int = 5,
+        sustain_threshold: float = 0.4
+    ):
         """
-        Initialize the formatter.
+        Initialize the formatter with configurable thresholds.
         
         Args:
             default_segment_duration: Default duration for the last segment
                                       (when no following onset exists).
+            stress_threshold: Multiplier for local average to detect stress.
+                              Segment is stressed if RMS > threshold * local_avg.
+            stress_window_size: Number of neighboring segments to consider
+                                for local average calculation.
+            sustain_threshold: Duration in seconds above which a segment
+                               is considered sustained (long vowel).
         """
         self.default_segment_duration = default_segment_duration
+        self.stress_threshold = stress_threshold
+        self.stress_window_size = stress_window_size
+        self.sustain_threshold = sustain_threshold
+    
+    def _calculate_segment_rms(
+        self, 
+        y: np.ndarray, 
+        sr: int, 
+        time_start: float, 
+        duration: float
+    ) -> float:
+        """
+        Calculate the RMS amplitude of an audio segment.
+        
+        Args:
+            y: Audio signal array.
+            sr: Sample rate.
+            time_start: Segment start time in seconds.
+            duration: Segment duration in seconds.
+            
+        Returns:
+            RMS amplitude of the segment.
+        """
+        start_sample = int(time_start * sr)
+        end_sample = int((time_start + duration) * sr)
+        
+        # Clamp to valid range
+        start_sample = max(0, start_sample)
+        end_sample = min(len(y), end_sample)
+        
+        if end_sample <= start_sample:
+            return 0.0
+        
+        segment_audio = y[start_sample:end_sample]
+        
+        # Calculate RMS (Root Mean Square)
+        rms = np.sqrt(np.mean(segment_audio ** 2))
+        return float(rms)
+    
+    def _detect_stress(
+        self, 
+        rms_values: list[float]
+    ) -> list[bool]:
+        """
+        Detect stressed segments based on RMS amplitude.
+        
+        A segment is stressed if its RMS exceeds the local average by
+        the configured threshold (e.g., > 1.2x local average).
+        
+        Args:
+            rms_values: List of RMS amplitudes for each segment.
+            
+        Returns:
+            List of booleans indicating stress for each segment.
+        """
+        if not rms_values:
+            return []
+        
+        n = len(rms_values)
+        half_window = self.stress_window_size // 2
+        stressed = []
+        
+        for i in range(n):
+            # Calculate local window bounds
+            window_start = max(0, i - half_window)
+            window_end = min(n, i + half_window + 1)
+            
+            # Get local neighborhood RMS values
+            local_rms = rms_values[window_start:window_end]
+            local_avg = np.mean(local_rms) if local_rms else 0.0
+            
+            # Avoid division by zero; if no signal, not stressed
+            if local_avg == 0:
+                stressed.append(False)
+            else:
+                # Stressed if RMS exceeds threshold * local average
+                is_stressed = bool(rms_values[i] > (self.stress_threshold * local_avg))
+                stressed.append(is_stressed)
+        
+        return stressed
+    
+    def _detect_sustain(self, durations: list[float]) -> list[bool]:
+        """
+        Detect sustained notes based on duration.
+        
+        A segment is sustained if its duration exceeds the configured
+        threshold (default: 0.4 seconds).
+        
+        Args:
+            durations: List of segment durations in seconds.
+            
+        Returns:
+            List of booleans indicating sustain for each segment.
+        """
+        return [bool(d > self.sustain_threshold) for d in durations]
     
     def format(self, analysis: AnalysisResult) -> PivotJSON:
         """
-        Format analysis results into Pivot JSON.
+        Format analysis results into Pivot JSON with stress/sustain detection.
         
         Args:
             analysis: AnalysisResult from LibrosaAnalyzer.
@@ -258,28 +373,48 @@ class PivotFormatter:
         Returns:
             PivotJSON object ready for serialization.
         """
-        segments = []
         onset_times = analysis.onset_times
+        y = analysis.audio_signal
+        sr = analysis.sample_rate
         
+        # First pass: calculate durations
+        durations = []
         for i, onset_time in enumerate(onset_times):
-            # Calculate duration to next onset
             if i < len(onset_times) - 1:
                 duration = onset_times[i + 1] - onset_time
             else:
-                # Last segment: use default duration
                 duration = self.default_segment_duration
-            
+            durations.append(duration)
+        
+        # Calculate RMS amplitude for each segment
+        rms_values = []
+        if y is not None:
+            for i, onset_time in enumerate(onset_times):
+                rms = self._calculate_segment_rms(y, sr, onset_time, durations[i])
+                rms_values.append(rms)
+        else:
+            # No audio signal available, all RMS = 0
+            rms_values = [0.0] * len(onset_times)
+        
+        # Detect stress and sustain
+        stressed = self._detect_stress(rms_values)
+        sustained = self._detect_sustain(durations)
+        
+        # Build segments with detected features
+        segments = []
+        for i, onset_time in enumerate(onset_times):
             segments.append(Segment(
                 time_start=onset_time,
-                duration=duration,
-                is_stressed=False  # Default to false for MVP
+                duration=durations[i],
+                is_stressed=stressed[i] if i < len(stressed) else False,
+                is_sustained=sustained[i] if i < len(sustained) else False
             ))
         
         # Create single block containing all segments (MVP approach)
         # Phase 2 can add bar detection to split into multiple blocks
         block = Block(
             id=1,
-            syllable_target=len(segments),  # Number of onsets = syllable slots
+            syllable_target=len(segments),
             segments=segments
         )
         

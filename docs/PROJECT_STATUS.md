@@ -53,7 +53,7 @@ Users can only:
 | Feature | PRD Requirement | Current State | Status |
 |---------|-----------------|---------------|--------|
 | Onset detection (Spectral Flux) | Librosa | ✅ Implemented via `librosa.onset.onset_detect()` | ✅ Done |
-| Intensity/Stress detection | Amplitude peaks | **All `is_stressed: false`** - not detecting | 🔴 Missing |
+| Intensity/Stress detection | Amplitude peaks | ✅ Implemented via RMS amplitude analysis | ✅ Done |
 | Interactive waveform | Wavesurfer.js + Regions | ✅ Fully functional | ✅ Done |
 | Region drag/resize | Required | ✅ Implemented | ✅ Done |
 | Merge/Split actions | Required | **Not implemented** | 🔴 Missing |
@@ -68,8 +68,8 @@ Users can only:
 **Notes**:
 - Onset detection works well (28 syllables detected in test audio)
 - BPM detection has ~5% variance (123 vs 130 BPM actual)
-- Sustained notes appear as single long segments instead of multiple syllables
-- No stress pattern detection implemented
+| Sustained notes appear as single long segments instead of multiple syllables | ⚠️ Known Issue |
+| Stress pattern detection implemented | ✅ Done |
 
 ---
 
@@ -86,7 +86,8 @@ Users can only:
 | `blocks[].syllable_target` | Required | ✅ Implemented (auto-calculated) | ✅ Done |
 | `segments[].time_start` | Required | ✅ Implemented | ✅ Done |
 | `segments[].duration` | Required | ✅ Implemented | ✅ Done |
-| `segments[].is_stressed` | Required | ⚠️ Field exists, always `false` | ⚠️ Partial |
+| `segments[].is_stressed` | Required | ✅ Implemented (dynamic detection) | ✅ Done |
+| `segments[].is_sustained` | Required | ✅ Implemented (duration threshold) | ✅ Done |
 | `segments[].pitch_contour` | Required | **Not implemented** | 🔴 Missing |
 
 **Current Output Structure**:
@@ -210,18 +211,38 @@ Based on the current frontend interface, users can perform **3 core actions only
 
 ---
 
+## 🎯 Target Frontend Experience (Missing vs Current)
+
+The current frontend is a **temporary testing prototype** with poor UX ("trash" tier). The final implementation requires a complete overhaul to support true interactivity.
+
+### 1. Interactivity Requirements (Currently Missing)
+The user **IS NOT** currently able to effectively edit the segmentation. The target experience requires:
+- [ ] **Drag & Resize**: Users must be able to freely move and resize segment regions.
+- [ ] **Split & Merge**: Ability to cut a segment in two or join two segments.
+- [ ] **Delete & Add**: Intuitive controls to remove false positives or add missing syllables.
+- [ ] **Snap-to-Grid**: Segments should optionally snap to rhythm quantization.
+
+### 2. Visual Requirements (Currently Basic)
+The current waveform overlay is merely functional. The target design needs:
+- [ ] **Distinct Blocks**: Regions should look like solid, interactive blocks that are **superposed directly onto the waveform** for easy edits.
+- [ ] **Clear Handles**: Visual cues for resizing (left/right handles).
+- [ ] **Hover Effects**: Clear visual feedback when hovering over editable zones.
+- [ ] **Context Menus**: Right-click actions for specific segment operations.
+
+> **Status**: The current UI exists purely to validate the backend data flow. A dedicated UI/UX phase is pending to build the actual editor.
+
+---
+
 ## 🔴 What Needs Refinement
 
 ### Critical (Blocks Core Functionality)
 1. **Real LLM integration** - Currently mock only
-2. **Stress detection** - All segments show `is_stressed: false`
 3. **Tap-to-Rhythm feature** - Manual marker placement missing
 4. **Region Split/Merge/Delete** - Editing actions missing
 5. **End-to-end pipeline** - No connection between audio analysis and lyric generation
 
 ### Important (Affects Quality)
 1. **BPM accuracy** - ~5% variance needs improvement
-2. **Sustained note detection** - Long vowels appear as single segments
 3. **Mono 16kHz conversion** - Missing audio preprocessing
 4. **Stress pattern matching** - No scoring implemented
 5. **Pitch contour detection** - Missing from Pivot JSON
@@ -249,6 +270,7 @@ Based on the current frontend interface, users can perform **3 core actions only
 - [x] Demucs backend (mock mode)
 - [x] Audio → Pivot JSON pipeline
 - [x] Region visualization
+- [x] Stress & Sustain detection (Enhanced Audio Analysis)
 - [ ] Tap-to-Rhythm feature
 
 ### Phase 2: End-to-End Integration (Weeks 5-6) → 🔴 0% Complete
@@ -295,9 +317,8 @@ Lyrics.ai/
    - Replace mock `LyricGenerator` with real calls
    - Test >90% syllabic accuracy
 
-2. **Add stress detection** in `audio_engine.py`
-   - Analyze amplitude peaks
-   - Map to `is_stressed` field
+2. **Refine Stress/Sustain Thresholds**
+   - Tune `audio_engine.py` parameters based on real-world testing
 
 ### Short-term (Next 2 Weeks)
 3. **Implement Tap-to-Rhythm** in `AudioEditor.tsx`
@@ -326,8 +347,6 @@ Lyrics.ai/
 | Issue | Location | Severity | Notes |
 |-------|----------|----------|-------|
 | BPM variance ~5% | `LibrosaAnalyzer.analyze()` | Medium | May need prior estimation |
-| Sustained vowels as single segment | `audio_engine.py` | Medium | Needs amplitude envelope analysis |
-| No stress detection | `PivotFormatter.format()` | High | All `is_stressed: false` |
 | Mock Demucs only | `DemucsProcessor` | Medium | Real processing needs GPU |
 | Single block rendering | `AudioEditor.tsx` | Low | Only `blocks[0]` displayed |
 
