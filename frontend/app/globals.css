@@ -1,0 +1,164 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #030712;
+  --foreground: #f3f4f6;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1f2937;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+/* ==========================================================================
+   WAVESURFER REGION STYLES - DAW-style "Clips"
+   ========================================================================== */
+
+.wavesurfer-region {
+  border-radius: 6px;
+  border: 2px solid rgba(99, 102, 241, 0.6);
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.wavesurfer-region:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+}
+
+/* Resize handles */
+.wavesurfer-handle {
+  background-color: rgba(168, 85, 247, 0.9) !important;
+  width: 4px !important;
+  border-radius: 2px !important;
+}
+
+.wavesurfer-handle:hover {
+  background-color: rgba(236, 72, 153, 1) !important;
+}
+
+/* ==========================================================================
+   TIMELINE STYLES
+   ========================================================================== */
+
+.wavesurfer-timeline {
+  font-family: var(--font-geist-mono), 'Courier New', monospace;
+  font-size: 10px;
+}
+
+/* ==========================================================================
+   SEGMENT TABLE STYLES
+   ========================================================================== */
+
+.segment-row {
+  transition: all 0.15s ease;
+}
+
+.segment-row:hover {
+  background-color: rgba(99, 102, 241, 0.15);
+}
+
+.segment-row.active {
+  background-color: rgba(168, 85, 247, 0.2);
+  border-left: 3px solid #a855f7;
+}
+
+/* ==========================================================================
+   WORKSPACE PANELS
+   ========================================================================== */
+
+.workspace-panel {
+  background: rgba(17, 24, 39, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(75, 85, 99, 0.4);
+}
+
+.workspace-panel-header {
+  background: rgba(31, 41, 55, 0.5);
+  border-bottom: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+/* ==========================================================================
+   FOCUS STATES
+   ========================================================================== */
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   UTILITY CLASSES
+   ========================================================================== */
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .glass {
+    background: rgba(17, 24, 39, 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(75, 85, 99, 0.4);
+  }
+
+  /* Full height utilities */
+  .h-panel-top {
+    height: 60%;
+  }
+
+  .h-panel-bottom {
+    height: 40%;
+  }
+
+  /* Scrollable container */
+  .scrollable {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #4b5563 #1f2937;
+  }
+
+  /* Mono font for timestamps */
+  .font-timestamp {
+    font-family: var(--font-geist-mono), 'Courier New', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ==========================================================================
+   KEYBOARD HINT STYLING
+   ========================================================================== */
+
+kbd {
+  font-family: var(--font-geist-mono), 'Courier New', monospace;
+  font-size: 0.75rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background-color: rgba(55, 65, 81, 0.8);
+  border: 1px solid rgba(75, 85, 99, 0.5);
+  color: #d1d5db;
+}
