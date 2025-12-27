@@ -65,7 +65,8 @@ export default function AudioEditor() {
     // ===========================================================================
 
     useEffect(() => {
-        if (!waveformRef.current || !file) return;
+        // Wait for loading to complete AND container to be mounted
+        if (!waveformRef.current || !file || isLoading) return;
 
         let ws: WaveSurfer | null = null;
 
@@ -136,7 +137,7 @@ export default function AudioEditor() {
             wavesurferRef.current = null;
             regionsRef.current = null;
         };
-    }, [file]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [file, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ===========================================================================
     // ZOOM SYNC
