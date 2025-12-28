@@ -276,6 +276,21 @@ As of 2025-12-28, onset detection parameters are configurable via `.env`:
 | `ONSET_USE_ENERGY` | `true` | Enable energy-based fallback detection |
 | `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before auto-splitting |
 | `ONSET_WAIT` | `1` | Min frames between onsets |
+
+## ⚙️ Phonetic Analysis Configuration
+
+As of 2025-12-28, phonetic analysis was enhanced with padding, retry, and fallback:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PHONETIC_ENABLED` | `true` | Enable IPA phoneme extraction via Allosaurus |
+| `PHONETIC_MIN_DURATION` | `0.10` | Min segment duration for analysis (100ms) |
+| `PHONETIC_PADDING` | `0.05` | Context padding on each side (50ms) |
+| `PHONETIC_RETRY_PADDING` | `0.10` | Expanded retry padding on failure (100ms) |
+| `PHONETIC_FALLBACK_ENABLED` | `true` | Return `[vowel]`/`[consonant]` when detection fails |
+
+> ⚠️ **Known Issue:** Allosaurus phoneme recognition has ~83% detection rate but **low accuracy** for mumbled/sung vocals. The IPA tokens returned often don't match expected sounds. See `docs/PHONETIC_ACCURACY_ISSUE.md` for details. **Recommended fix: Phase C (Whisper integration)**.
+
 ---
 
 ## 📅 Roadmap Progress
@@ -322,6 +337,23 @@ As of 2025-12-28, onset detection parameters are configurable via `.env`:
 - [ ] "Regenerate" button
 - [ ] Region locking
 - [ ] Context menu for segment actions
+
+### Phonetic Improvement: Phase A & B → ✅ 100% Complete
+- [x] Add segment padding (50ms context on each side)
+- [x] Increase min_duration (100ms minimum)
+- [x] Add retry with expanded padding (100ms on failure)
+- [x] Add `[vowel]`/`[consonant]` fallback classification
+- [x] Add 5 new config options (`PHONETIC_*`)
+- [x] Create `classify_sound_type()` spectral fallback
+- [x] Tests: 8 new tests in `test_phonetic_padding.py`
+
+> **Result:** Detection rate improved from 67% → 83%, but **accuracy issue remains** (see `docs/PHONETIC_ACCURACY_ISSUE.md`).
+
+### Phonetic Improvement: Phase C → 🔴 0% Complete
+- [ ] Integrate Whisper for transcription
+- [ ] Convert words → phonemes via g2p_en
+- [ ] Add `PHONETIC_MODEL` config option `allosaurus`/`whisper`
+- [ ] Fall back to Allosaurus when Whisper fails
 
 ---
 

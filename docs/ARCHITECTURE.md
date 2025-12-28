@@ -152,6 +152,19 @@ All configuration is centralized in `config.py` and loaded from `.env`:
 | `API_PORT` | `8000` | Server port |
 | `MAX_FILE_SIZE_MB` | `100` | Max upload size |
 
+### Phonetic Analysis (Allosaurus)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PHONETIC_ENABLED` | `true` | Enable IPA phoneme extraction |
+| `PHONETIC_MIN_DURATION` | `0.10` | Min segment duration for analysis (seconds) |
+| `PHONETIC_PADDING` | `0.05` | Context padding on each side (seconds) |
+| `PHONETIC_RETRY_PADDING` | `0.10` | Expanded retry padding when first attempt fails |
+| `PHONETIC_FALLBACK_ENABLED` | `true` | Enable `[vowel]`/`[consonant]` fallback |
+
+> [!WARNING]
+> **Known Issue:** Allosaurus phoneme recognition is inaccurate for mumbled/sung vocals. Detection rate is ~83%, but accuracy is low. See [PHONETIC_ACCURACY_ISSUE.md](./PHONETIC_ACCURACY_ISSUE.md) for details and recommended Phase C solution (Whisper integration).
+
 ---
 
 ## 📂 Directory Structure

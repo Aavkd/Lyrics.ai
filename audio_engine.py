@@ -208,6 +208,45 @@ def resample_audio(y: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.nd
 # PHONETIC ANALYZER - IPA RECOGNITION
 # =============================================================================
 
+def classify_sound_type(y_segment: np.ndarray, sr: int) -> str:
+    """
+    Fallback: classify sound as vowel, consonant, or mid using spectral features.
+    
+    Used when Allosaurus fails to detect phonemes. Provides basic guidance
+    to the LLM about the nature of the sound.
+    
+    Args:
+        y_segment: Audio signal array for the segment.
+        sr: Sample rate.
+        
+    Returns:
+        "[vowel]" for open vowel sounds (low centroid, low ZCR)
+        "[consonant]" for fricatives/plosives (high ZCR)
+        "[mid]" for uncertain classification
+    """
+    if len(y_segment) == 0:
+        return "[mid]"
+    
+    try:
+        # Spectral centroid: high = bright sound, low = deeper sound
+        centroid = librosa.feature.spectral_centroid(y=y_segment, sr=sr)
+        mean_centroid = np.mean(centroid)
+        
+        # Zero crossing rate: high = noisy/fricative, low = tonal/vowel
+        zcr = librosa.feature.zero_crossing_rate(y_segment)
+        mean_zcr = np.mean(zcr)
+        
+        # Classify based on features
+        if mean_zcr > 0.1:
+            return "[consonant]"  # High ZCR = fricative/plosive
+        elif mean_centroid < 2000:
+            return "[vowel]"      # Low centroid = open vowel sound
+        else:
+            return "[mid]"        # Uncertain / mixed
+            
+    except Exception:
+        return "[mid]"  # Return neutral on any error
+
 class PhoneticAnalyzer:
     """
     Wrapper for Allosaurus phone recognition.
@@ -215,19 +254,52 @@ class PhoneticAnalyzer:
     Allosaurus is a universal phone recognizer that outputs IPA tokens
     regardless of language or meaning - perfect for analyzing mumbles.
     
+    Enhanced features:
+    - Configurable segment padding for acoustic context
+    - Retry mechanism with expanded padding on failure
+    - Fallback classification when Allosaurus fails
+    - Short segment merging for better recognition
+    
     Usage:
         analyzer = PhoneticAnalyzer()
         ipa = analyzer.analyze_segment(audio_chunk, sample_rate=22050)
         # Returns: "b a d a" (IPA tokens)
     """
     
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = None):
         """
         Initialize the Phonetic Analyzer.
         
         Args:
-            enabled: If False, skip phonetic analysis (for faster processing).
+            enabled: If False, skip phonetic analysis (backward compatible - no fallback).
+                    If None, reads from config and uses fallback on failure.
         """
+        # Track if user explicitly disabled (for backward compatibility)
+        # If explicitly disabled, don't use fallback either
+        self._explicitly_disabled = (enabled is False)
+        
+        # Load configuration
+        try:
+            from config import config
+            self.min_duration = config.PHONETIC_MIN_DURATION
+            self.padding = config.PHONETIC_PADDING
+            self.retry_padding = config.PHONETIC_RETRY_PADDING
+            self.fallback_enabled = config.PHONETIC_FALLBACK_ENABLED
+            if enabled is None:
+                enabled = config.PHONETIC_ENABLED
+        except ImportError:
+            # Fallback defaults if config not available
+            self.min_duration = 0.10
+            self.padding = 0.05
+            self.retry_padding = 0.10
+            self.fallback_enabled = True
+            if enabled is None:
+                enabled = True
+        
+        # Override fallback if explicitly disabled (backward compatibility)
+        if self._explicitly_disabled:
+            self.fallback_enabled = False
+        
         self.enabled = enabled
         self.model = None
         self._initialized = False
@@ -256,11 +328,51 @@ class PhoneticAnalyzer:
         
         self._initialized = True
     
+    def _run_allosaurus(self, y_segment: np.ndarray, sr: int) -> str:
+        """
+        Internal method: Run Allosaurus on audio segment.
+        
+        Args:
+            y_segment: Audio signal array.
+            sr: Sample rate.
+            
+        Returns:
+            IPA string or empty string on failure.
+        """
+        if self.model is None:
+            return ""
+        
+        # Resample to 16kHz for Allosaurus
+        y_16k = resample_audio(y_segment, sr, 16000)
+        
+        import tempfile
+        import soundfile as sf
+        
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                temp_path = f.name
+                sf.write(temp_path, y_16k, 16000)
+            
+            result = self.model.recognize(temp_path)
+            return result.strip() if result else ""
+            
+        except Exception as e:
+            print(f"[PhoneticAnalyzer] Allosaurus call failed: {e}")
+            return ""
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+    
     def analyze_segment(
         self, 
         y_segment: np.ndarray, 
         sr: int,
-        min_duration: float = 0.05
+        min_duration: float = None,
+        use_fallback: bool = True
     ) -> str:
         """
         Extract IPA phonemes from an audio segment.
@@ -268,55 +380,43 @@ class PhoneticAnalyzer:
         Args:
             y_segment: Audio signal array for the segment.
             sr: Sample rate of the audio.
-            min_duration: Minimum duration in seconds to analyze.
+            min_duration: Minimum duration in seconds. Uses config default if None.
+            use_fallback: If True, use classify_sound_type() on failure.
             
         Returns:
             Space-separated IPA phoneme string (e.g., "b a d a").
-            Returns empty string if analysis fails or segment too short.
+            Returns "[vowel]", "[consonant]", or "[mid]" if fallback is used.
+            Returns empty string if analysis fails and fallback is disabled.
         """
         self._lazy_init()
         
         if not self.enabled or self.model is None:
+            if use_fallback and self.fallback_enabled:
+                return classify_sound_type(y_segment, sr)
             return ""
+        
+        # Use config default if not specified
+        if min_duration is None:
+            min_duration = self.min_duration
         
         # Check minimum duration
         duration = len(y_segment) / sr
         if duration < min_duration:
+            if use_fallback and self.fallback_enabled:
+                return classify_sound_type(y_segment, sr)
             return ""
         
-        # Resample to 16kHz for Allosaurus
-        y_16k = resample_audio(y_segment, sr, 16000)
+        # First attempt
+        result = self._run_allosaurus(y_segment, sr)
         
-        # Allosaurus requires file input, so save to temp file
-        # NOTE: On Windows, use delete=False because the file must be closed
-        # before Allosaurus can read it (Windows file locking behavior)
-        import tempfile
-        import soundfile as sf
+        if result:
+            return result
         
-        temp_path = None
-        try:
-            # Create temp file with delete=False for Windows compatibility
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                temp_path = f.name
-                sf.write(temp_path, y_16k, 16000)
-            
-            # File is now closed, Allosaurus can read it
-            result = self.model.recognize(temp_path)
-            
-            # Result is space-separated IPA tokens
-            return result.strip() if result else ""
-            
-        except Exception as e:
-            # Non-critical: just return empty string on failure
-            print(f"[PhoneticAnalyzer] Segment analysis failed: {e}")
-            return ""
-        finally:
-            # Clean up temp file
-            if temp_path:
-                try:
-                    Path(temp_path).unlink(missing_ok=True)
-                except Exception:
-                    pass  # Ignore cleanup errors
+        # Fallback classification if enabled
+        if use_fallback and self.fallback_enabled:
+            return classify_sound_type(y_segment, sr)
+        
+        return ""
     
     def analyze_segments(
         self,
@@ -328,6 +428,11 @@ class PhoneticAnalyzer:
         """
         Analyze multiple segments and return IPA phonemes for each.
         
+        Enhanced with:
+        - Padding on each side of segment for acoustic context
+        - Retry mechanism with expanded padding on failure
+        - Fallback classification when Allosaurus fails
+        
         Args:
             y: Full audio signal.
             sr: Sample rate.
@@ -335,31 +440,84 @@ class PhoneticAnalyzer:
             durations: List of segment durations in seconds.
             
         Returns:
-            List of IPA strings, one per segment.
+            List of IPA strings (or fallback tags), one per segment.
         """
         self._lazy_init()
         
         if not self.enabled or self.model is None:
+            # Even when disabled, provide fallback if enabled
+            if self.fallback_enabled:
+                phonemes_list = []
+                for onset_time, duration in zip(onset_times, durations):
+                    start_sample = max(0, int(onset_time * sr))
+                    end_sample = min(len(y), int((onset_time + duration) * sr))
+                    if end_sample > start_sample:
+                        segment_audio = y[start_sample:end_sample]
+                        phonemes_list.append(classify_sound_type(segment_audio, sr))
+                    else:
+                        phonemes_list.append("[mid]")
+                return phonemes_list
             return [""] * len(onset_times)
         
+        # Calculate padding in samples
+        padding_samples = int(self.padding * sr)
+        retry_padding_samples = int(self.retry_padding * sr)
+        
         phonemes_list = []
+        detected_count = 0
+        fallback_count = 0
         
         for onset_time, duration in zip(onset_times, durations):
-            # Extract segment audio
-            start_sample = int(onset_time * sr)
-            end_sample = int((onset_time + duration) * sr)
+            # Original segment boundaries
+            orig_start = int(onset_time * sr)
+            orig_end = int((onset_time + duration) * sr)
             
-            # Clamp to valid range
-            start_sample = max(0, start_sample)
-            end_sample = min(len(y), end_sample)
+            # Add padding for first attempt (Phase A.1: Add Segment Padding)
+            start_sample = max(0, orig_start - padding_samples)
+            end_sample = min(len(y), orig_end + padding_samples)
             
             if end_sample <= start_sample:
-                phonemes_list.append("")
+                if self.fallback_enabled:
+                    phonemes_list.append("[mid]")
+                    fallback_count += 1
+                else:
+                    phonemes_list.append("")
                 continue
             
             segment_audio = y[start_sample:end_sample]
-            ipa = self.analyze_segment(segment_audio, sr)
-            phonemes_list.append(ipa)
+            
+            # First attempt with standard padding
+            ipa = self._run_allosaurus(segment_audio, sr)
+            
+            # Retry with expanded padding if failed (Phase A.3: Add Retry)
+            if not ipa and duration < 0.2:  # Only retry for short segments
+                expanded_start = max(0, orig_start - retry_padding_samples)
+                expanded_end = min(len(y), orig_end + retry_padding_samples)
+                
+                if expanded_end > expanded_start:
+                    expanded_segment = y[expanded_start:expanded_end]
+                    ipa = self._run_allosaurus(expanded_segment, sr)
+            
+            if ipa:
+                phonemes_list.append(ipa)
+                detected_count += 1
+            else:
+                # Fallback classification (Phase B.2)
+                if self.fallback_enabled:
+                    # Use original segment (without padding) for fallback classification
+                    orig_segment = y[max(0, orig_start):min(len(y), orig_end)]
+                    fallback = classify_sound_type(orig_segment, sr)
+                    phonemes_list.append(fallback)
+                    fallback_count += 1
+                else:
+                    phonemes_list.append("")
+        
+        # Log detection statistics
+        total = len(onset_times)
+        if total > 0:
+            detection_rate = detected_count / total * 100
+            print(f"[PhoneticAnalyzer] Detection: {detected_count}/{total} ({detection_rate:.1f}%), "
+                  f"Fallback: {fallback_count}")
         
         return phonemes_list
 

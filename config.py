@@ -177,6 +177,62 @@ class Config:
             return 1
     
     # =========================================================================
+    # PHONETIC ANALYSIS (Allosaurus)
+    # =========================================================================
+    
+    @property
+    def PHONETIC_ENABLED(self) -> bool:
+        """Enable phonetic analysis via Allosaurus."""
+        return os.getenv("PHONETIC_ENABLED", "true").lower() == "true"
+    
+    @property
+    def PHONETIC_MIN_DURATION(self) -> float:
+        """Minimum segment duration for phonetic analysis (seconds).
+        
+        Segments shorter than this will return empty phonemes.
+        Default: 0.10 (100ms) - Allosaurus needs sufficient context.
+        """
+        try:
+            return float(os.getenv("PHONETIC_MIN_DURATION", "0.10"))
+        except ValueError:
+            return 0.10
+    
+    @property
+    def PHONETIC_PADDING(self) -> float:
+        """Padding on each side of segment for acoustic context (seconds).
+        
+        Adds audio context before/after each segment to improve
+        Allosaurus recognition at segment boundaries.
+        Default: 0.05 (50ms on each side).
+        """
+        try:
+            return float(os.getenv("PHONETIC_PADDING", "0.05"))
+        except ValueError:
+            return 0.05
+    
+    @property
+    def PHONETIC_RETRY_PADDING(self) -> float:
+        """Expanded retry padding when first attempt fails (seconds).
+        
+        If Allosaurus returns empty on first try, retry with this
+        additional padding on each side.
+        Default: 0.10 (100ms additional context).
+        """
+        try:
+            return float(os.getenv("PHONETIC_RETRY_PADDING", "0.10"))
+        except ValueError:
+            return 0.10
+    
+    @property
+    def PHONETIC_FALLBACK_ENABLED(self) -> bool:
+        """Enable vowel/consonant fallback when Allosaurus fails.
+        
+        When enabled, uses spectral features to classify segments
+        as [vowel], [consonant], or [mid] when Allosaurus returns empty.
+        """
+        return os.getenv("PHONETIC_FALLBACK_ENABLED", "true").lower() == "true"
+    
+    # =========================================================================
     # SERVER CONFIGURATION
     # =========================================================================
     
