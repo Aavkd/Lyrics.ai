@@ -80,3 +80,62 @@ The UI must accommodate two states:
 By adopting this dual approach, we solve the technical limitation of the LLM (drift on long contexts) by enforcing segmentation in Workflow A, while unlocking a higher-value product feature (creative assistance) in Workflow B.
 
 The "failure" of the long-audio test has effectively defined the architecture requirements for the full automation pipeline: **Long audio must be treated as a sequence of short audios.**
+
+---
+
+## 5. Syllable Detection Overhaul (2025-12-28)
+
+Following from the Dual-Workflow requirements, the syllable detection system was overhauled to address critical issues identified during testing.
+
+### Problem Identified
+
+The original onset detection (delta=0.1) was too conservative, causing:
+- Under-detection: "Talk to me, I said what" (6 syllables) detected as only 3 segments
+- Multi-syllable segments: Individual segments stretching to 1.0s+ covering multiple syllables
+
+### Solutions Implemented
+
+1. **Adaptive Onset Detection**
+   - Lowered default `ONSET_DELTA` from 0.1 to 0.05 (more sensitive)
+   - Added energy-based fallback detection (activates when spectral finds <3 onsets)
+   - Both strategies merge and deduplicate results
+
+2. **Automatic Segment Splitting**
+   - Segments longer than `MAX_SEGMENT_DURATION` (1.0s) are split at energy valleys
+   - Valley depth checking (min 30% drop) prevents splitting sustained notes
+   - Splitting happens BEFORE phonetic analysis to ensure correct timestamps
+
+3. **Breath/Noise Filtering**
+   - Short segments (<150ms) with low energy (<15% of max) are discarded
+   - Prevents breath intakes from being detected as syllables
+
+4. **Sustained Note Protection**
+   - Valley depth analysis: flat valleys = sustained vowel, don't split
+   - Deep valleys (>30% drop) = syllable boundary, split allowed
+
+### Configuration
+
+All parameters are now configurable via `.env`:
+
+```ini
+ONSET_DELTA=0.05          # Lower = more sensitive
+ONSET_USE_ENERGY=true     # Enable energy-based fallback
+MAX_SEGMENT_DURATION=1.0  # Split very long segments only
+ONSET_WAIT=1              # Min frames between onsets
+```
+
+### Results
+
+| Audio File | Before | After |
+|------------|--------|-------|
+| test_audio_2-1.m4a (6 syllables) | 3 segments | 6 segments ✓ |
+| Existing precision test files | Unchanged | Still passing ✓ |
+
+### Pipeline Order (Verified Correct)
+
+```
+Librosa Onsets → Splitting Logic → Breath Filtering → Final Timestamps → Allosaurus/Phonetic Analysis
+```
+
+This ensures phonetic analysis receives clean, correctly-timed segments.
+

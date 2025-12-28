@@ -1,7 +1,7 @@
 # 📊 Flow-to-Lyrics: Project Status Report
 
 **Last Updated**: 2025-12-28  
-**Version**: MVP - English Only  
+**Version**: MVP - English Only (Post Syllable Detection Overhaul)  
 **Objective**: Transform informal vocal flows ("yaourt") into coherent rap/song lyrics with strict rhythmic precision and human validation.
 
 ---
@@ -57,7 +57,10 @@ Users can only:
 
 | Feature | PRD Requirement | Current State | Status |
 |---------|-----------------|---------------|--------|
-| Onset detection (Spectral Flux) | Librosa | ✅ `librosa.onset.onset_detect()` with calibrated params | ✅ Done |
+| Onset detection (Spectral Flux) | Librosa | ✅ `librosa.onset.onset_detect()` with adaptive params | ✅ Done |
+| **Adaptive onset detection** | Required | ✅ Spectral + energy-based fallback | ✅ Done |
+| **Segment auto-splitting** | Required | ✅ Long segments split at energy valleys | ✅ Done |
+| **Breath filtering** | Required | ✅ Low-energy segments filtered | ✅ Done |
 | Intensity/Stress detection | Amplitude peaks | ✅ RMS amplitude analysis | ✅ Done |
 | Sustain detection | Duration threshold | ✅ Duration-based detection | ✅ Done |
 | **Pitch detection** | Required | ✅ `librosa.pyin` pitch tracking | ✅ Done |
@@ -151,6 +154,7 @@ Users can only:
 | 3_syllabes_test.mp3 | 3 | 3 | ✓ 0 |
 | 5_syllabes_test.mp3 | 5 | 5 | ✓ 0 |
 | 10_syllabes_test.mp3 | 10 | 11 | +1 |
+| **test_audio_2-1.m4a** | **6** | **6** | **✓ 0** |
 
 ---
 
@@ -259,6 +263,19 @@ The current waveform overlay is merely functional. The target design needs:
 3. **Export functionality** - Save edited segments
 4. **Genre/Theme metadata** - Not captured
 5. **Multi-block support** - Only `blocks[0]` is rendered
+
+---
+
+## ⚙️ Syllable Detection Configuration
+
+As of 2025-12-28, onset detection parameters are configurable via `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ONSET_DELTA` | `0.05` | Detection sensitivity (lower = more sensitive) |
+| `ONSET_USE_ENERGY` | `true` | Enable energy-based fallback detection |
+| `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before auto-splitting |
+| `ONSET_WAIT` | `1` | Min frames between onsets |
 ---
 
 ## 📅 Roadmap Progress

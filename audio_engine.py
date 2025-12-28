@@ -638,13 +638,14 @@ class PivotFormatter:
         sr: int,
         segment_start: float,
         segment_end: float,
-        min_valley_spacing: float = 0.08
+        min_valley_spacing: float = 0.08,
+        min_valley_depth: float = 0.3
     ) -> list[float]:
         """
         Find local energy minima within a segment for splitting.
         
-        Identifies points where energy dips, which typically correspond
-        to boundaries between syllables within a long segment.
+        Only returns valleys where energy drops SIGNIFICANTLY, avoiding
+        splits during sustained notes where energy stays relatively flat.
         
         Args:
             y: Audio signal.
@@ -652,6 +653,11 @@ class PivotFormatter:
             segment_start: Segment start time in seconds.
             segment_end: Segment end time in seconds.
             min_valley_spacing: Minimum time between valleys.
+            min_valley_depth: Minimum relative depth of valley (0.0-1.0).
+                              A value of 0.3 means energy must drop by at least
+                              30% compared to surrounding peaks to be considered
+                              a valid split point. This prevents splitting
+                              sustained notes with flat energy profiles.
             
         Returns:
             List of valley times (potential split points).
@@ -672,34 +678,53 @@ class PivotFormatter:
         hop_length = 256
         rms = librosa.feature.rms(y=segment_audio, hop_length=hop_length)[0]
         
-        if len(rms) < 3:
+        if len(rms) < 5:  # Need enough frames to detect valleys
             return []
         
         # Normalize RMS
-        rms_normalized = rms / (np.max(rms) + 1e-10)
+        rms_max = np.max(rms) + 1e-10
+        rms_normalized = rms / rms_max
         
-        # Find local minima (valleys)
+        # Find local minima (valleys) with depth checking
         valleys = []
         min_distance_frames = int(min_valley_spacing * sr / hop_length)
+        window_size = max(3, min_distance_frames // 2)  # Window for local peak detection
         
         last_valley_idx = -min_distance_frames
-        for i in range(1, len(rms_normalized) - 1):
+        for i in range(window_size, len(rms_normalized) - window_size):
             if i - last_valley_idx < min_distance_frames:
                 continue
             
             # Check if local minimum
-            if (rms_normalized[i] < rms_normalized[i-1] and 
-                rms_normalized[i] < rms_normalized[i+1] and
-                rms_normalized[i] < 0.5):  # Below 50% of max energy
-                
-                # Convert frame to time (relative to segment start)
-                valley_time = segment_start + (i * hop_length / sr)
-                
-                # Only include valleys that are well inside the segment
-                margin = 0.05  # 50ms from edges
-                if segment_start + margin < valley_time < segment_end - margin:
-                    valleys.append(valley_time)
-                    last_valley_idx = i
+            if not (rms_normalized[i] < rms_normalized[i-1] and 
+                    rms_normalized[i] < rms_normalized[i+1]):
+                continue
+            
+            # Find local peaks on either side to measure valley depth
+            left_peak = np.max(rms_normalized[max(0, i-window_size):i])
+            right_peak = np.max(rms_normalized[i+1:min(len(rms_normalized), i+window_size+1)])
+            surrounding_avg = (left_peak + right_peak) / 2
+            
+            # Calculate valley depth relative to surrounding peaks
+            valley_depth = surrounding_avg - rms_normalized[i]
+            
+            # Only accept valleys with significant depth (Issue #3: sustained note handling)
+            # If energy stays flat, valley_depth will be small -> don't split
+            if valley_depth < min_valley_depth:
+                continue  # Flat valley = sustained note, don't split
+            
+            # Also require absolute energy drop below 50% of max
+            if rms_normalized[i] >= 0.5:
+                continue
+            
+            # Convert frame to time (relative to segment start)
+            valley_time = segment_start + (i * hop_length / sr)
+            
+            # Only include valleys that are well inside the segment
+            margin = 0.05  # 50ms from edges
+            if segment_start + margin < valley_time < segment_end - margin:
+                valleys.append(valley_time)
+                last_valley_idx = i
         
         return valleys
     
@@ -762,6 +787,77 @@ class PivotFormatter:
             print(f"[PivotFormatter] Split {split_count} long segments -> {len(new_onsets)} total segments")
         
         return new_onsets, new_durations
+    
+    def _filter_low_energy_segments(
+        self,
+        onset_times: list[float],
+        durations: list[float],
+        y: np.ndarray,
+        sr: int,
+        min_energy_ratio: float = 0.15,
+        max_short_duration: float = 0.15
+    ) -> tuple[list[float], list[float]]:
+        """
+        Filter out low-energy segments that are likely breath sounds or noise.
+        
+        Issue #2: The "Breath" Trap - prevents detecting breath intakes as syllables.
+        
+        A segment is filtered if BOTH conditions are met:
+        1. Duration is short (< max_short_duration seconds)
+        2. RMS energy is low (< min_energy_ratio of track's max energy)
+        
+        Long low-energy segments are kept (might be quiet speech).
+        High-energy short segments are kept (might be consonant pops).
+        
+        Args:
+            onset_times: Segment start times.
+            durations: Segment durations.
+            y: Audio signal.
+            sr: Sample rate.
+            min_energy_ratio: Minimum energy threshold relative to track max.
+            max_short_duration: Duration threshold for "short" segments.
+            
+        Returns:
+            Tuple of (filtered_onset_times, filtered_durations).
+        """
+        if y is None or len(onset_times) == 0:
+            return onset_times, durations
+        
+        # Calculate global RMS max for reference
+        global_rms = librosa.feature.rms(y=y)[0]
+        global_max_rms = np.max(global_rms) + 1e-10
+        energy_threshold = min_energy_ratio * global_max_rms
+        
+        filtered_onsets = []
+        filtered_durations = []
+        filtered_count = 0
+        
+        for onset, duration in zip(onset_times, durations):
+            # Only filter short segments
+            if duration < max_short_duration:
+                # Calculate segment RMS
+                start_sample = int(onset * sr)
+                end_sample = int((onset + duration) * sr)
+                start_sample = max(0, start_sample)
+                end_sample = min(len(y), end_sample)
+                
+                if end_sample > start_sample:
+                    segment_audio = y[start_sample:end_sample]
+                    segment_rms = np.sqrt(np.mean(segment_audio ** 2))
+                    
+                    # Filter if energy is below threshold (likely breath/noise)
+                    if segment_rms < energy_threshold:
+                        filtered_count += 1
+                        continue  # Skip this segment
+            
+            # Keep segment
+            filtered_onsets.append(onset)
+            filtered_durations.append(duration)
+        
+        if filtered_count > 0:
+            print(f"[PivotFormatter] Filtered {filtered_count} low-energy segments (breaths/noise)")
+        
+        return filtered_onsets, filtered_durations
     
     def _calculate_segment_rms(
         self, 
@@ -970,6 +1066,9 @@ class PivotFormatter:
         
         # Split long segments at energy valleys (prevents multi-syllable segments)
         onset_times, durations = self._split_long_segments(onset_times, durations, y, sr)
+        
+        # Filter out low-energy segments (Issue #2: breaths and noise)
+        onset_times, durations = self._filter_low_energy_segments(onset_times, durations, y, sr)
         
         # Calculate RMS amplitude for each segment
         rms_values = []

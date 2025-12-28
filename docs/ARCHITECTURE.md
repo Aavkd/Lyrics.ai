@@ -1,7 +1,7 @@
 # 🏗️ Flow-to-Lyrics Architecture
 
 **Last Updated**: 2025-12-28  
-**Version**: 2.0 (Post Phase 1 Precision Engine)  
+**Version**: 2.1 (Post Syllable Detection Overhaul)  
 **Context**: Technical documentation for "Flow-to-Lyrics" MVP.
 
 ---
@@ -52,7 +52,7 @@ graph TD
 | File | Type | Lines | Responsibilities |
 |------|------|-------|------------------|
 | `main.py` | API Entry | ~223 | FastAPI app, CORS, `/upload` endpoint, temp file mgmt. |
-| `audio_engine.py` | DSP Core | ~631 | **DemucsProcessor**: Vocal isolation.<br>**LibrosaAnalyzer**: BPM, onsets, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection. |
+| `audio_engine.py` | DSP Core | ~1200 | **DemucsProcessor**: Vocal isolation.<br>**LibrosaAnalyzer**: Adaptive onset detection (spectral + energy), BPM, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection, segment splitting, breath filtering. |
 | `prompt_engine.py` | Translator | ~351 | Converts PivotJSON → LLM prompts with stress/sustain/pitch guidance. |
 | `generation_engine.py` | LLM Brain | ~421 | Ollama HTTP integration (local + cloud), JSON parsing. |
 | `validator.py` | Gatekeeper | ~365 | g2p_en phonetic validation, syllable counting, groove scoring. |
@@ -144,6 +144,10 @@ All configuration is centralized in `config.py` and loaded from `.env`:
 | `OLLAMA_TIMEOUT` | `60` | Request timeout in seconds |
 | `OLLAMA_API_KEY` | *(empty)* | API key for cloud Ollama |
 | `MOCK_MODE` | `true` | Skip Demucs for development |
+| `ONSET_DELTA` | `0.05` | Onset detection sensitivity (lower = more) |
+| `ONSET_USE_ENERGY` | `true` | Enable energy-based fallback detection |
+| `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before splitting |
+| `ONSET_WAIT` | `1` | Min frames between onsets |
 | `API_HOST` | `0.0.0.0` | Server host |
 | `API_PORT` | `8000` | Server port |
 | `MAX_FILE_SIZE_MB` | `100` | Max upload size |
@@ -212,6 +216,7 @@ class Segment:
     is_stressed: bool = False
     is_sustained: bool = False
     pitch_contour: str = "mid"  # low, mid, high, rising, falling
+    audio_phonemes: str = ""    # IPA from Allosaurus
 ```
 
 ### GenerationResult (Backend)

@@ -1,133 +1,154 @@
-# Phonetic Update: Known Issues & Refinements Needed
+# Phonetic Update: Refinements Status
 
 **Last Updated**: 2025-12-28  
-**Version**: 2.1-alpha (Post Initial Implementation)
+**Version**: 2.2-alpha (Post Syllable Detection Overhaul)
 
 ---
 
-## Summary of Issues Found
+## Summary
 
-After implementing the phonetic "Sound-Alike" feature and testing with real vocal mumbles, several issues were identified that need refinement before the pipeline produces accurate prompts.
+This document tracked phonetic analysis issues and their fixes. **Most critical issues have been resolved** as of 2025-12-28.
 
 ---
 
-## Issue 1: Under-Detection of Syllables (CRITICAL)
+## Issue 1: Under-Detection of Syllables - ✅ RESOLVED
 
-### Observed Behavior
+### Original Problem
 - **Input**: Vocal mumble of "Talk to me, I said what" (6 syllables)
 - **Expected**: 6 segments detected
 - **Actual**: 3 segments detected
 
 ### Root Cause
-The `LibrosaAnalyzer` onset detection is configured with conservative parameters (`delta=0.1`) optimized for reducing false positives. However, this causes **under-detection** of syllables in continuous speech/mumbles.
+The `LibrosaAnalyzer` onset detection was configured with conservative parameters (`delta=0.1`) that caused **under-detection** of syllables in continuous speech/mumbles.
 
-### Impact
-- LLM is asked to generate 3-syllable lines instead of 6
-- Generated lyrics will be completely wrong length
-- User has no way to manually correct syllable count
+### Solution Implemented (2025-12-28)
 
-### Proposed Fixes
-1. **Tune onset parameters**: Lower `delta` threshold for more sensitive detection
-2. **Add manual syllable count override**: Let user specify expected syllable count (will be implemented later)
-3. **Add Tap-to-Rhythm**: Let user manually tap syllable onsets (already in roadmap, will be implemented later)
-4. **Use multiple detection strategies**: Combine spectral flux with energy-based onset detection
+1. **Lowered onset detection threshold**: Changed default `delta` from `0.1` to `0.05` for more sensitive detection.
 
----
+2. **Added energy-based fallback detection**: A secondary detection strategy using RMS energy peaks, activated when spectral flux finds fewer than 3 onsets.
 
-## Issue 2: Long Segment Durations (HIGH)
+3. **Configurable via `.env`**:
+   ```ini
+   ONSET_DELTA=0.05          # Lower = more sensitive
+   ONSET_USE_ENERGY=true     # Enable energy-based fallback
+   ```
 
-### Observed Behavior
-- Segment 1: 0.441s duration
-- Segment 2: 1.045s duration (too long for single syllable)
-- Segment 3: 0.200s duration
-
-### Root Cause
-When onset detection misses intermediate syllables, the duration stretches to cover multiple syllables as one segment.
-
-### Impact
-- Allosaurus analyzes the entire long segment, picking up multiple sounds
-- Phoneme output like `tʂʰ ʌ m e` contains sounds from multiple syllables
-- Sustain detection incorrectly marks multi-syllable segments as "sustained"
-
-### Proposed Fixes
-1. **Split long segments**: Automatically sub-divide segments > 0.5s
-2. **Use Allosaurus phone boundaries**: Allosaurus can output timestamped phones
-3. **Energy-based sub-segmentation**: Split on energy valleys within segments
+### Result
+- **Before**: 3 segments detected
+- **After**: 6 segments detected ✓
 
 ---
 
-## Issue 3: Phoneme Quality (MEDIUM)
+## Issue 2: Long Segment Durations - ✅ RESOLVED
 
-### Observed Behavior
-- Mumble: "Talk to me" → Detected: `t͡ɕ ʌ ɒ | tʂʰ ʌ m e`
-- Expected IPA: `t ɔ k t u m i`
+### Original Problem
+- Segment durations stretching to 1.045s (too long for single syllable)
 
-### Analysis
-- `t͡ɕ` (voiceless alveolo-palatal affricate) is close to "t" + "ch" sounds
-- `ʌ` (schwa-like) is reasonable for unstressed vowels
-- `tʂʰ` (retroflex aspirated) picked up "to" but with accent characteristics
-- The phonemes are **phonetically similar** but not exact matches
+### Solution Implemented (2025-12-28)
+
+1. **Automatic segment splitting**: Segments longer than `MAX_SEGMENT_DURATION` (default: 1.0s) are split at energy valleys.
+
+2. **Valley depth checking**: Only splits when energy drops >30% from surrounding peaks, preventing incorrect splits during sustained notes.
+
+3. **Configurable via `.env`**:
+   ```ini
+   MAX_SEGMENT_DURATION=1.0  # Only very long segments split
+   ```
+
+---
+
+## Issue 3: Breath Sound Detection - ✅ RESOLVED
+
+### Original Problem (Identified during overhaul)
+Lowering detection threshold risked detecting breath intakes as syllables.
+
+### Solution Implemented (2025-12-28)
+
+1. **Low-energy segment filtering**: Short segments (<150ms) with low energy (<15% of track max) are filtered out as likely breaths/noise.
+
+2. **Automatic in pipeline**: `_filter_low_energy_segments()` runs after splitting, before phonetic analysis.
+
+---
+
+## Issue 4: Sustained Note Handling - ✅ RESOLVED
+
+### Original Problem
+Segment splitting could chop "loooove" (sustained vowel) into "loo" + "oove".
+
+### Solution Implemented (2025-12-28)
+
+1. **Valley depth requirement**: `_find_energy_valleys()` now requires `min_valley_depth=0.3` (30% energy drop) to consider a split point valid.
+
+2. **Flat valleys = sustained notes**: If energy stays relatively flat within a segment, it's marked as sustained (not split).
+
+---
+
+## Issue 5: Phoneme Quality - ⚠️ PARTIALLY ADDRESSED
+
+### Current Status
+- Allosaurus returns valid IPA symbols (e.g., `t͡ɕ ʌ ɒ`)
+- These are universal phones, may differ from English-specific phonemes
+- Phonetic matching score remains low (0.00-0.08 in tests)
 
 ### Impact
-- Phonetic matching score is low (0.00-0.08 in tests)
 - LLM gets approximate sound hints but not precise matches
+- This is expected behavior for universal phone recognition
 
 ### Assessment
-This is **partially expected behavior** - Allosaurus recognizes universal phones, which may differ from English-specific phonemes. The broad phonetic class matching (consonant vs vowel) helps, but exact matching is unreliable.
-
-### Proposed Fixes
-1. **Use broad phonetic classes only**: Match by manner (plosive, nasal, vowel) not exact IPA
-2. **Focus on vowel matching**: Vowels are more perceptually salient
-3. **Increase phonetic weight only when confidence is high**
+This is **partially expected behavior**. The broad phonetic class matching helps, but exact matching is unreliable. Consider simplifying to consonant/vowel class matching only.
 
 ---
 
-## Issue 4: Missing Phonemes on Short Segments (LOW)
+## Issue 6: Transcription Order - ✅ VERIFIED CORRECT
 
-### Observed Behavior
-- Segment 3 (0.2s): No phonemes detected `(none)`
+### Concern
+Segment splitting must happen BEFORE phonetic analysis to ensure Allosaurus receives correct timestamps.
 
-### Root Cause
-The `min_duration` check (0.05s) should pass, but Allosaurus may fail on very short audio clips.
+### Status
+Verified in `PivotFormatter.format()`:
+1. Line 1067-1068: `_split_long_segments()` runs first
+2. Line 1070: `_filter_low_energy_segments()` runs second
+3. Line 1091: `phonetic_analyzer.analyze_segments()` runs AFTER
 
-### Proposed Fixes
-1. **Pad short segments**: Add silence padding before analysis
-2. **Handle gracefully**: Already returns empty string (correct behavior)
+Correct order confirmed. ✓
 
 ---
 
-## Recommendations for Next Phase
+## Configuration Options
 
-### Priority 1: Fix Syllable Detection
-- [ ] Experiment with lower `delta` values (0.05, 0.07)
-- [ ] Test with energy-based onset detection as alternative
-- [ ] Implement manual syllable count override in API
-- [ ] Add Tap-to-Rhythm feature for manual onset marking
+All syllable detection parameters are now configurable via `.env`:
 
-### Priority 2: Improve Segment Quality
-- [ ] Implement automatic segment splitting for durations > 0.5s
-- [ ] Use Allosaurus with `timestamp=True` for sub-segmentation
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ONSET_DELTA` | `0.05` | Detection sensitivity (lower = more sensitive) |
+| `ONSET_USE_ENERGY` | `true` | Enable energy-based fallback detection |
+| `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before auto-splitting |
+| `ONSET_WAIT` | `1` | Min frames between onsets |
 
-### Priority 3: Refine Phonetic Matching
+---
+
+## Remaining Work
+
+### Priority 1: Phonetic Matching Improvement
 - [ ] Simplify to broad phonetic class matching only
 - [ ] Weight vowel sounds more heavily than consonants
 - [ ] Add confidence score from Allosaurus to weight phonetic score
 
-### Priority 4: UI/UX Improvements
+### Priority 2: UI/UX Improvements
 - [ ] Display detected segments visually for user validation
 - [ ] Allow user to edit/split/merge segments before generation
 - [ ] Show phonetic transcription for human review
 
 ---
 
-## Test Command
+## Test Commands
 
-To reproduce the issues:
+To test syllable detection:
 ```powershell
-python tests/test_pipeline_inspector.py "audio samples/test_audio_2-1.m4a"
+python audio_engine.py "audio samples/test_audio_2-1.m4a" --mock
 ```
 
-To run without phonetic analysis (faster):
+To run precision tuning test:
 ```powershell
-python tests/test_pipeline_inspector.py "audio samples/test_audio_2-1.m4a" --no-phonetic
+python tests/test_precision_tuning.py
 ```

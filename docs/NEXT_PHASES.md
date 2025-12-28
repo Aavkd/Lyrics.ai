@@ -1,7 +1,7 @@
 ﻿#  Technical Specification: "Dual-Workflow" & Precision Pivot
 
 **Date:** December 28, 2025  
-**Version:** 3.1 (Post Phase 1 Completion)  
+**Version:** 3.2 (Post Syllable Detection Overhaul)  
 **Objective:** Refactor the backend for high-precision iterative generation (Co-Pilot) and prepare the architecture for batch automation.
 
 ## 1. Executive Strategy
@@ -93,23 +93,31 @@ When `OLLAMA_API_KEY` is set, the engine automatically adds `Authorization: Bear
 - Outputs comparison table with error analysis
 - Recommends best configuration
 
-**Test Results:**
+**Recommended Configuration Applied (Updated 2025-12-28):**
 
-| File | Expected | Best Config | Error |
-|------|----------|-------------|-------|
-| 3_syllabes(sustained)_test.mp3 | 3 | Less Sensitive | ✓ 0 |
-| 3_syllabes_test.mp3 | 3 | Less Sensitive | ✓ 0 |
-| 5_syllabes_test.mp3 | 5 | Less Sensitive | ✓ 0 |
-| 10_syllabes_test.mp3 | 10 | Less Sensitive | +1 |
+The default onset detection now uses **adaptive detection** via `.env`:
 
-**Recommended Configuration Applied:**
-```python
-OnsetConfig(
-    name="Less Sensitive",
-    delta=0.1,  # Higher = fewer false positives
-    wait=1, pre_max=1, post_max=1
-)
+```ini
+ONSET_DELTA=0.05          # Lower = more sensitive (was 0.1)
+ONSET_USE_ENERGY=true     # Enable energy-based fallback
+MAX_SEGMENT_DURATION=1.0  # Split very long segments
 ```
+
+Additional robustness improvements:
+- Energy-based fallback detection (activates when spectral finds <3 onsets)
+- Automatic segment splitting at energy valleys (for segments >1.0s)
+- Breath/noise filtering (removes short low-energy segments)
+- Valley depth checking (prevents splitting sustained notes)
+
+**Test Results (Updated 2025-12-28):**
+
+| File | Expected | Detected | Error |
+|------|----------|----------|-------|
+| 3_syllabes(sustained)_test.mp3 | 3 | 3 | ✓ 0 |
+| 3_syllabes_test.mp3 | 3 | 3 | ✓ 0 |
+| 5_syllabes_test.mp3 | 5 | 5 | ✓ 0 |
+| 10_syllabes_test.mp3 | 10 | 11 | +1 |
+| **test_audio_2-1.m4a (was broken)** | **6** | **6** | **✓ 0** |
 
 ---
 
@@ -203,6 +211,8 @@ OnsetConfig(
 | Priority | Component | Task | Status |
 | :--- | :--- | :--- | :--- |
 | **P0 (Done)** | AudioEngine | ~~Tune Onset Detection & Implement Pitch~~ | ✅ Complete |
+| **P0 (Done)** | AudioEngine | ~~Adaptive onset detection (spectral + energy)~~ | ✅ Complete |
+| **P0 (Done)** | AudioEngine | ~~Segment splitting & breath filtering~~ | ✅ Complete |
 | **P0 (Done)** | CorePipeline | ~~Refactor to return ALL 5 candidates~~ | ✅ Complete |
 | **P0 (Done)** | Validator | ~~Calibrate Groove Score (2x weight)~~ | ✅ Complete |
 | **P0 (Done)** | PromptEngine | ~~Inject Melodic/Pitch constraints~~ | ✅ Complete |
