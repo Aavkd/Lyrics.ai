@@ -1,6 +1,6 @@
 # 📊 Flow-to-Lyrics: Project Status Report
 
-**Generated**: 2025-12-27  
+**Last Updated**: 2025-12-28  
 **Version**: MVP - English Only  
 **Objective**: Transform informal vocal flows ("yaourt") into coherent rap/song lyrics with strict rhythmic precision and human validation.
 
@@ -8,28 +8,31 @@
 
 ## 📋 Executive Summary
 
-The Flow-to-Lyrics project is currently at approximately **55% completion** of the MVP roadmap from a **user perspective**. The **backend pipeline is now COMPLETE** with all 4 core engines working end-to-end:
+The Flow-to-Lyrics project is currently at approximately **70% completion** of the MVP roadmap. The **backend pipeline is COMPLETE** with all 5 core engines working end-to-end:
 
-1. ✅ **AudioEngine** - Analyzes audio, detects segments with stress/sustain
-2. ✅ **PromptEngine** - Translates PivotJSON to LLM prompts
+1. ✅ **AudioEngine** - Analyzes audio, detects segments with stress/sustain/pitch
+2. ✅ **PromptEngine** - Translates PivotJSON to LLM prompts with melodic guidance
 3. ✅ **GenerationEngine** - Generates candidates via Ollama (local or cloud)
 4. ✅ **LyricValidator** - The "Gatekeeper" that filters by syllable count and groove score
+5. ✅ **CorePipeline** - End-to-end orchestrator with multi-candidate exposure
 
-The frontend remains a **read-only audio viewer** with no editing or generation capabilities.
+The frontend remains a **read-only audio viewer** with no editing or generation capabilities exposed.
 
 ### Current User Experience
 Users can only:
-1. **Import** an audio file (drag-and-drop)
+1. **Import** an audio file (drag-and-drop or file picker)
 2. **View** the waveform with auto-detected segments
 3. **Play** the audio with spacebar control
+4. **View** segment details in synchronized data table
 
-**No editing, no lyric generation UI, no export.** The app is a visualization prototype. Lyric generation works via CLI only.
+**No editing, no lyric generation UI, no export.** Lyric generation works via CLI only.
 
 | Phase | Status | User-Facing? |
 |-------|--------|--------------|
 | Phase 0: Blind Test (Lyric Validation) | ✅ Complete | ❌ CLI only |
-| Phase 1: Segmentation Tool | ⚠️ Display only | ⚠️ Read-only |
-| Phase 2: End-to-End Integration | ⚠️ Backend only | ❌ Not exposed |
+| Phase 1: Precision Engine | ✅ Complete | ❌ Backend only |
+| Phase 2: End-to-End Integration | ⚠️ 75% Complete | ❌ Not exposed |
+| Phase 3: Co-Pilot UI | 🔴 Not Started | 🔴 Missing |
 
 ---
 
@@ -41,17 +44,12 @@ Users can only:
 |---------|-----------------|---------------|--------|
 | Input formats | WAV/MP3 | MP3, WAV, M4A, FLAC, OGG ✅ | ✅ Done |
 | Demucs v4 (Hybrid Transformer) | Required | Implemented with mock mode | ⚠️ Partial |
-| Vocal isolation | Separate vocals vs instrumental | Code exists but defaults to `MOCK_MODE=true` | ⚠️ Partial |
+| Vocal isolation | Separate vocals vs instrumental | Code exists, defaults to `MOCK_MODE=true` | ⚠️ Partial |
 | Mono 16kHz conversion | Required for optimal analysis | **Not implemented** | 🔴 Missing |
 | Normalized vocal stem | Required | **Not implemented** | 🔴 Missing |
 
 **Files Involved**:
-- `audio_engine.py` → `DemucsProcessor` class (lines 90-174)
-
-**Notes**:
-- Demucs processor is implemented but runs in mock mode by default
-- Real Demucs processing requires GPU and is not tested in production
-- No sample rate conversion or normalization step exists
+- `audio_engine.py` → `DemucsProcessor` class (lines 95-179)
 
 ---
 
@@ -59,24 +57,20 @@ Users can only:
 
 | Feature | PRD Requirement | Current State | Status |
 |---------|-----------------|---------------|--------|
-| Onset detection (Spectral Flux) | Librosa | ✅ Implemented via `librosa.onset.onset_detect()` | ✅ Done |
-| Intensity/Stress detection | Amplitude peaks | ✅ Implemented via RMS amplitude analysis | ✅ Done |
+| Onset detection (Spectral Flux) | Librosa | ✅ `librosa.onset.onset_detect()` with calibrated params | ✅ Done |
+| Intensity/Stress detection | Amplitude peaks | ✅ RMS amplitude analysis | ✅ Done |
+| Sustain detection | Duration threshold | ✅ Duration-based detection | ✅ Done |
+| **Pitch detection** | Required | ✅ `librosa.pyin` pitch tracking | ✅ Done |
 | Interactive waveform | Wavesurfer.js + Regions | ✅ Fully functional | ✅ Done |
-| Region drag/resize | Required | ✅ Implemented | ✅ Done |
+| Region drag/resize | Required | ⚠️ Visual only, not persisted | ⚠️ Partial |
 | Merge/Split actions | Required | **Not implemented** | 🔴 Missing |
 | Delete regions | Required | **Not implemented** | 🔴 Missing |
 | Tap-to-Rhythm (Space key) | Manual marker placement | **Not implemented** | 🔴 Missing |
 
 **Files Involved**:
-- `audio_engine.py` → `LibrosaAnalyzer` class (lines 181-229)
-- `frontend/components/AudioEditor.tsx` (526 lines)
+- `audio_engine.py` → `LibrosaAnalyzer`, `PivotFormatter` classes
+- `frontend/components/AudioEditor.tsx` (527 lines)
 - `frontend/components/SegmentList.tsx` (164 lines)
-
-**Notes**:
-- Onset detection works well (28 syllables detected in test audio)
-- BPM detection has ~5% variance (123 vs 130 BPM actual)
-| Sustained notes appear as single long segments instead of multiple syllables | ⚠️ Known Issue |
-| Stress pattern detection implemented | ✅ Done |
 
 ---
 
@@ -85,17 +79,18 @@ Users can only:
 | Feature | PRD Requirement | Current State | Status |
 |---------|-----------------|---------------|--------|
 | `meta.tempo` | Required | ✅ Implemented | ✅ Done |
+| `meta.duration` | Required | ✅ Implemented | ✅ Done |
 | `meta.genre` | Required | **Not implemented** | 🔴 Missing |
 | `meta.theme` | Required | **Not implemented** | 🔴 Missing |
 | `meta.language` | Required (en-US) | **Not implemented** | 🔴 Missing |
 | `blocks[].id` | Required | ✅ Implemented | ✅ Done |
 | `blocks[].rhyme_scheme` | Required | **Not implemented** | 🔴 Missing |
-| `blocks[].syllable_target` | Required | ✅ Implemented (auto-calculated) | ✅ Done |
+| `blocks[].syllable_target` | Required | ✅ Auto-calculated | ✅ Done |
 | `segments[].time_start` | Required | ✅ Implemented | ✅ Done |
 | `segments[].duration` | Required | ✅ Implemented | ✅ Done |
-| `segments[].is_stressed` | Required | ✅ Implemented (dynamic detection) | ✅ Done |
-| `segments[].is_sustained` | Required | ✅ Implemented (duration threshold) | ✅ Done |
-| `segments[].pitch_contour` | Required | **Not implemented** | 🔴 Missing |
+| `segments[].is_stressed` | Required | ✅ Dynamic RMS detection | ✅ Done |
+| `segments[].is_sustained` | Required | ✅ Duration threshold | ✅ Done |
+| `segments[].pitch_contour` | Required | ✅ **NEW** - pyin detection | ✅ Done |
 
 **Current Output Structure**:
 ```json
@@ -103,18 +98,20 @@ Users can only:
   "meta": { "tempo": 123.05, "duration": 11.65 },
   "blocks": [{
     "id": 1,
-    "syllable_target": 28,
+    "syllable_target": 5,
     "segments": [
-      { "time_start": 0.07, "duration": 0.186, "is_stressed": false }
+      { 
+        "time_start": 0.07, 
+        "duration": 0.186, 
+        "is_stressed": true,
+        "is_sustained": false,
+        "pitch_contour": "mid"
+      }
     ]
   }],
-  "_meta": { "filename": "test.mp3", "mock_mode": true }
+  "_meta": { "filename": "test.mp3", "mock_mode": true, "llm_model": "ministral-3:8b" }
 }
 ```
-
-**Files Involved**:
-- `audio_engine.py` → `PivotJSON`, `PivotFormatter` classes
-- `frontend/store/useAudioStore.ts` → TypeScript interfaces
 
 ---
 
@@ -122,52 +119,38 @@ Users can only:
 
 | Feature | PRD Requirement | Current State | Status |
 |---------|-----------------|---------------|--------|
-| "Generate Many, Filter Best" strategy | Required | ✅ Logic exists in `phase0_blind_test.py` | ✅ Done |
+| "Generate Many, Filter Best" strategy | Required | ✅ 5-candidate generation | ✅ Done |
 | g2p_en phonetic validation | Required | ✅ Fully implemented | ✅ Done |
 | Syllable counting (auditory) | Required | ✅ Works correctly | ✅ Done |
 | Stress pattern matching | Required | ✅ `LyricValidator.calculate_groove_score()` | ✅ Done |
-| LLM integration (Local Ollama) | Required | ✅ `GenerationEngine` with ministral-3 | ✅ Done |
-| Parallel 5-candidate generation | Required | ✅ Full pipeline: Prompt → Ollama → JSON parsing | ✅ Done |
+| **Weighted Groove Scoring** | Required | ✅ 2x weight for stressed beats | ✅ Done |
+| LLM integration (Local Ollama) | Required | ✅ `GenerationEngine` | ✅ Done |
+| **Cloud Ollama support** | Optional | ✅ API key authentication | ✅ Done |
+| Parallel 5-candidate generation | Required | ✅ Full pipeline | ✅ Done |
 | Syllabic scoring (0 or 1) | Required | ✅ `LyricValidator.validate_line()` | ✅ Done |
-| Stress scoring (0.0 - 1.0) | Required | ✅ `LyricValidator` Groove Score (0.0-1.0) | ✅ Done |
+| Stress scoring (0.0 - 1.0) | Required | ✅ Groove Score | ✅ Done |
 | Retry with error-specific prompts | Required | **Not implemented** | 🔴 Missing |
-| **Prompt Engine (JSON→Prompt)** | Required | ✅ `PromptEngine` class with external templates | ✅ Done |
-| **Core Pipeline (Orchestrator)** | Required | ✅ `CorePipeline` class orchestrates all engines | ✅ Done |
+| **Prompt Engine** | Required | ✅ External templates | ✅ Done |
+| **Pitch/Melodic Guidance** | Required | ✅ **NEW** - Injected in prompts | ✅ Done |
+| **Core Pipeline** | Required | ✅ `CorePipeline` orchestrator | ✅ Done |
+| **Multi-Candidate Exposure** | Required | ✅ `GenerationResult` returns all 5 | ✅ Done |
 
 **Files Involved**:
-- `validator.py` → `LyricValidator` class (The Gatekeeper - g2p_en phonetic validation)
-- `core_pipeline.py` → `CorePipeline` class (The Orchestrator - end-to-end flow)
-- `generation_engine.py` → `GenerationEngine` class (Ollama HTTP integration)
-- `phase0_blind_test.py` → `SyllableValidator`, `LyricGenerator` classes
-- `prompt_engine.py` → `PromptEngine` class (JSON-to-Prompt translation)
-- `prompts/system_instruction.md` → System prompt with persona and few-shot examples
-- `prompts/user_template.md` → User prompt template with placeholders
-- `tests/test_generation.py` → Test suite for GenerationEngine
-- `tests/test_end_to_end.py` → Test suite for Validator and CorePipeline
+- `validator.py` → `LyricValidator` class
+- `core_pipeline.py` → `CorePipeline`, `GenerationResult` classes
+- `generation_engine.py` → `GenerationEngine` class
+- `prompt_engine.py` → `PromptEngine` class
+- `prompts/system_instruction.md` → System prompt
+- `prompts/user_template.md` → User template with `{{pitch_guidance}}`
 
-**Test Results** (Real LLM Generation - 2025-12-27):
+**Test Results** (Precision Tuning - 2025-12-28):
 
-| Step | Result | Details |
-|------|--------|---------|
-| Audio Analysis | ✅ | 7 syllables detected, pattern: DA-da-da-da-DA-da-da |
-| LLM Generation | ✅ | 5 candidates from Ollama ministral-3 |
-| Validation | ✅ | 3/5 matched syllable count |
-| Best Match | ✅ | "No **way** to stop me, I **glide**" (score: 0.29) |
-
-**Latest Pipeline Output:**
-```
-🧠 Generated 5 candidates:
-  1. "I **soar** the skies so free" (6 syllables ✗)
-  2. "No **way** to stop me, I **glide**" (7 syllables ✓)
-  3. "The **glow** of gold in my eyes" (7 syllables ✓)
-  4. "**Fly** fast, I'm wild in the night" (7 syllables ✓)
-  5. "**Go** hard, no one can hide" (6 syllables ✗)
-
-🏆 WINNING LYRIC: "No **way** to stop me, I **glide**"
-📊 GROOVE SCORE: 0.29
-```
-
-**Success Rate**: 60% (3/5 valid syllable matches)
+| Test File | Expected Syllables | Detected | Error |
+|-----------|-------------------|----------|-------|
+| 3_syllabes(sustained)_test.mp3 | 3 | 3 | ✓ 0 |
+| 3_syllabes_test.mp3 | 3 | 3 | ✓ 0 |
+| 5_syllabes_test.mp3 | 5 | 5 | ✓ 0 |
+| 10_syllabes_test.mp3 | 10 | 11 | +1 |
 
 ---
 
@@ -191,14 +174,13 @@ Users can only:
 | Technology | PRD | Current | Status |
 |------------|-----|---------|--------|
 | FastAPI (Async, Websockets) | Required | ✅ FastAPI implemented | ⚠️ No Websockets |
-| Torchaudio | Required | Not used | 🔴 Missing |
 | Librosa | Required | ✅ Installed & used | ✅ Done |
 | Demucs | Required | ✅ Installed (mock mode) | ⚠️ Partial |
 | g2p_en | Required | ✅ Fully functional | ✅ Done |
-| nltk (CMU Dict) | Required | Not used directly | ⚠️ Partial |
-| Instructor/Outlines | Required for JSON | Regex-based parsing in GenerationEngine | ⚠️ Alternative |
-| Local Ollama (ministral-3) | Required | ✅ Fully integrated | ✅ Done |
-| Cloud Ollama Support | Optional | ✅ API key authentication via `OLLAMA_API_KEY` | ✅ Done |
+| Instructor/Outlines | Required for JSON | Robust regex parsing | ⚠️ Alternative |
+| Local Ollama | Required | ✅ Fully integrated | ✅ Done |
+| Cloud Ollama | Optional | ✅ API key authentication | ✅ Done |
+| **Config Module** | Implied | ✅ Centralized `.env` loading | ✅ Done |
 
 ### Frontend (Next.js / React)
 
@@ -215,78 +197,68 @@ Users can only:
 
 ## ✅ What The User Can Actually Do (Current UX)
 
-Based on the current frontend interface, users can perform **3 core actions only**:
+Based on the current frontend interface, users can perform **4 core actions only**:
 
 | Action | Works? | Notes |
 |--------|--------|-------|
-| 🎵 **Import audio file** | ✅ | Drag-and-drop or click to select (MP3, WAV, etc.) |
+| 🎵 **Import audio file** | ✅ | Drag-and-drop or click (MP3, WAV, M4A, FLAC, OGG) |
 | 👁️ **View waveform + segments** | ✅ | See detected syllable regions overlaid on waveform |
 | ▶️ **Play/pause audio** | ✅ | Button or Spacebar shortcut |
+| 📊 **View segment table** | ✅ | Bi-directional sync with waveform hover/active |
 
-**That's it.** Everything else is either backend-only or code that exists but isn't exposed to the user.
+**That's it.** Everything else is backend-only or not exposed to the user.
 
 ### What Appears to Work But Doesn't
 
 | Feature | Visual State | Reality |
 |---------|--------------|---------|
 | Drag/resize regions | Regions appear draggable | Changes aren't saved or exported |
-| Segment table | Shows data | Read-only display, no editing |
 | Zoom controls | Slider exists | Works but has no practical use |
 | BPM display | Shows value | Informational only |
 
-### Backend Infrastructure (Not User-Facing)
+### Backend Infrastructure (Working but Not User-Facing)
 1. **FastAPI server** (`main.py`) - Runs on `localhost:8000`
-2. **Audio upload endpoint** (`POST /upload`) - Returns Pivot JSON
-3. **BPM/Onset detection** - Librosa analysis (~5% BPM variance)
-4. **Phonetic syllable counting** - g2p_en works in `phase0_blind_test.py`
-5. **Mock LLM generation** - Test script only, no API integration
-6. **Prompt Engine** - `prompt_engine.py` translates PivotJSON to LLM prompts
+2. **Audio upload endpoint** (`POST /upload`) - Returns PivotJSON
+3. **Full lyric generation pipeline** (`CorePipeline`) - Works via CLI
+4. **5-candidate LLM generation** (`GenerationEngine`) - Returns all options
+5. **Phonetic validation** (`LyricValidator`) - g2p_en groove scoring
+6. **Pitch detection** (`PivotFormatter`) - librosa.pyin integration
+7. **Prompt Engine** (`prompt_engine.py`) - Melodic guidance injection
 
 ---
-
 ## 🎯 Target Frontend Experience (Missing vs Current)
-
 The current frontend is a **temporary testing prototype** with poor UX ("trash" tier). The final implementation requires a complete overhaul to support true interactivity.
-
 ### 1. Interactivity Requirements (Currently Missing)
 The user **IS NOT** currently able to effectively edit the segmentation. The target experience requires:
 - [ ] **Drag & Resize**: Users must be able to freely move and resize segment regions.
 - [ ] **Split & Merge**: Ability to cut a segment in two or join two segments.
 - [ ] **Delete & Add**: Intuitive controls to remove false positives or add missing syllables.
 - [ ] **Snap-to-Grid**: Segments should optionally snap to rhythm quantization.
-
 ### 2. Visual Requirements (Currently Basic)
 The current waveform overlay is merely functional. The target design needs:
 - [ ] **Distinct Blocks**: Regions should look like solid, interactive blocks that are **superposed directly onto the waveform** for easy edits.
 - [ ] **Clear Handles**: Visual cues for resizing (left/right handles).
 - [ ] **Hover Effects**: Clear visual feedback when hovering over editable zones.
 - [ ] **Context Menus**: Right-click actions for specific segment operations.
-
 > **Status**: The current UI exists purely to validate the backend data flow. A dedicated UI/UX phase is pending to build the actual editor.
-
 ---
-
 ## 🔴 What Needs Refinement
-
 ### Critical (Blocks Core Functionality)
 1. **Real LLM integration** - Currently mock only
 3. **Tap-to-Rhythm feature** - Manual marker placement missing
 4. **Region Split/Merge/Delete** - Editing actions missing
 5. **End-to-end pipeline** - No connection between audio analysis and lyric generation
-
 ### Important (Affects Quality)
 1. **BPM accuracy** - ~5% variance needs improvement
 3. **Mono 16kHz conversion** - Missing audio preprocessing
 4. **Stress pattern matching** - No scoring implemented
 5. **Pitch contour detection** - Missing from Pivot JSON
-
 ### Nice to Have
 1. **Timeline plugin** - Visual time markers
 2. **SSE streaming** - Real-time lyric display
 3. **Export functionality** - Save edited segments
 4. **Genre/Theme metadata** - Not captured
 5. **Multi-block support** - Only `blocks[0]` is rendered
-
 ---
 
 ## 📅 Roadmap Progress
@@ -295,25 +267,44 @@ The current waveform overlay is merely functional. The target design needs:
 - [x] Python script with syllable input
 - [x] g2p_en phonetic validation
 - [x] "Generate Many, Filter Best" logic
-- [x] Prompt Engine (Step 2: JSON-to-Prompt translation)
-- [x] Real LLM integration (Local Ollama with ministral-3)
+- [x] Prompt Engine (JSON-to-Prompt translation)
+- [x] Real LLM integration (Ollama)
 - [x] Validator with Groove Score (0.0-1.0)
 - [x] Core Pipeline orchestrating all engines
 
-### Phase 1: Segmentation Tool (Weeks 3-4) → ✅ 95% Complete
+### Phase 1: Precision Engine → ✅ 100% Complete
+- [x] Pitch detection (`librosa.pyin`)
+- [x] Pitch contour mapping (low/mid/high/rising/falling)
+- [x] Multi-candidate exposure (`GenerationResult`)
+- [x] Groove score calibration (2x weight for stressed beats)
+- [x] Melodic guidance in prompts (`{{pitch_guidance}}`)
+- [x] Precision tuning script (`test_precision_tuning.py`)
+- [x] Onset detection optimization (delta=0.1)
+
+### Phase 2: Segmentation Tool → ⚠️ 75% Complete
 - [x] Wavesurfer.js frontend
 - [x] Demucs backend (mock mode)
 - [x] Audio → Pivot JSON pipeline
 - [x] Region visualization
-- [x] Stress & Sustain detection (Enhanced Audio Analysis)
+- [x] Stress & Sustain detection
+- [x] Config module (`.env` support)
+- [x] Cloud Ollama support
 - [ ] Tap-to-Rhythm feature
+- [ ] Region editing (split/merge/delete)
 
-### Phase 2: End-to-End Integration (Weeks 5-6) → ⚠️ 40% Complete
+### Phase 3: End-to-End Integration → ⚠️ 50% Complete
 - [x] Connect Phase 0 + Phase 1 (via `core_pipeline.py`)
-- [x] Full pipeline testing (8 tests passing)
-- [ ] API endpoint for lyrics generation
+- [x] Full pipeline testing (all tests passing)
+- [ ] API endpoint for lyrics generation (`POST /generate/interactive`)
 - [ ] SSE streaming for lyrics
 - [ ] Export functionality
+
+### Phase 4: Co-Pilot UI → 🔴 0% Complete
+- [ ] Candidate List UI component ("Slot Machine")
+- [ ] Click-to-Apply lyric selection
+- [ ] "Regenerate" button
+- [ ] Region locking
+- [ ] Context menu for segment actions
 
 ---
 
@@ -321,43 +312,45 @@ The current waveform overlay is merely functional. The target design needs:
 
 ```
 Lyrics.ai/
-├── main.py                     # FastAPI server (215 lines)
-├── audio_engine.py             # Step 1: DSP logic - Demucs + Librosa (523 lines)
-├── prompt_engine.py            # Step 2: JSON-to-Prompt translation (270 lines)
-├── generation_engine.py        # Step 3: Ollama LLM integration (330 lines)
-├── validator.py                # Step 4: LyricValidator - The Gatekeeper (280 lines) ⭐ NEW
-├── core_pipeline.py            # Step 4: CorePipeline - The Orchestrator (267 lines) ⭐ NEW
-├── phase0_blind_test.py        # Original syllable validation script (362 lines)
+├── main.py                     # FastAPI server (223 lines)
+├── audio_engine.py             # DSP: Demucs + Librosa + Pitch (631 lines)
+├── prompt_engine.py            # JSON-to-Prompt translation (351 lines)
+├── generation_engine.py        # Ollama LLM integration (421 lines)
+├── validator.py                # LyricValidator - The Gatekeeper (365 lines)
+├── core_pipeline.py            # CorePipeline - The Orchestrator (422 lines)
+├── config.py                   # Centralized config with .env (211 lines)
+├── phase0_blind_test.py        # Original validation script (362 lines)
 ├── requirements.txt            # Python dependencies
-├── test_audio_real.mp3         # Real test audio file
+├── .env / .env.example         # Configuration
+├── test_audio_real.mp3         # Test audio files
 ├── prompts/                    # LLM prompt templates
 │   ├── system_instruction.md   # Persona + few-shot examples
-│   └── user_template.md        # Jinja2-style user prompt
+│   └── user_template.md        # User prompt with pitch guidance
 ├── tests/
-│   ├── test_audio_analysis.py  # Step 1 tests
-│   ├── test_prompt_engine.py   # Step 2 tests
-│   ├── test_generation.py      # Step 3 tests (Ollama integration)
-│   └── test_end_to_end.py      # Step 4 tests (Full pipeline) ⭐ NEW
+│   ├── test_audio_analysis.py  # Stress/sustain tests
+│   ├── test_prompt_engine.py   # Prompt generation tests
+│   ├── test_generation.py      # LLM integration tests
+│   ├── test_end_to_end.py      # Full pipeline tests
+│   └── test_precision_tuning.py # Onset calibration
+├── audio samples/              # Precision tuning audio files
 ├── docs/                       # Documentation
-│   ├── prd.md                  # Product Requirements Document
+│   ├── ARCHITECTURE.md
 │   ├── PROJECT_STATUS.md       # This file
-│   ├── TECH_ROADMAP.md         # Technical roadmap
-│   ├── PHASE0_CHANGELOG.md     # Phase 0 changes
-│   ├── PHASE1_CHANGELOG.md     # Phase 1 changes
-│   ├── PHASE2_CHANGELOG.md     # Phase 2 changes
-│   └── PHASE3_CHANGELOG.md     # Phase 3 changes (Validator + Pipeline) ⭐ NEW
+│   ├── NEXT_PHASES.md
+│   ├── PHASE1_PRECISION_CHANGELOG.md
+│   └── prd.md
 └── frontend/
     ├── app/
     │   ├── page.tsx            # Main page layout
     │   ├── layout.tsx          # Root layout
     │   └── globals.css         # Dark theme styles
     ├── components/
-    │   ├── AudioEditor.tsx     # Waveform editor (526 lines)
+    │   ├── AudioEditor.tsx     # Waveform editor (527 lines)
     │   └── SegmentList.tsx     # Segment table (164 lines)
     ├── store/
     │   └── useAudioStore.ts    # Zustand state (138 lines)
     └── lib/
-        └── api.ts              # Backend API client (48 lines)
+        └── api.ts              # Backend API client
 ```
 
 ---
@@ -365,33 +358,25 @@ Lyrics.ai/
 ## 🚀 Recommended Next Steps
 
 ### Immediate (This Week)
-1. **Implement real LLM integration** in `phase0_blind_test.py`
-   - Add Groq API client
-   - Replace mock `LyricGenerator` with real calls
-   - Test >90% syllabic accuracy
+1. **Create `/generate/interactive` API endpoint**
+   - Accept `region_id` and `context` parameters
+   - Return all 5 candidates with scores
+   - Connect frontend to this endpoint
 
-2. **Refine Stress/Sustain Thresholds**
-   - Tune `audio_engine.py` parameters based on real-world testing
+2. **Build Candidate List UI Component**
+   - Display 5 lyric options with scores
+   - Click-to-apply functionality
+   - "Regenerate" button
 
 ### Short-term (Next 2 Weeks)
 3. **Implement Tap-to-Rhythm** in `AudioEditor.tsx`
-   - Add keyboard event listener for tap mode
-   - Create new regions on tap
-   - Sync with Zustand store
-
-4. **Add Split/Merge/Delete actions**
-   - Region context menu
-   - Keyboard shortcuts
+4. **Add Region Split/Merge/Delete actions**
+5. **File Slicing** for audio > 4 seconds
 
 ### Medium-term (Weeks 3-4)
-5. **Connect Phase 0 + Phase 1**
-   - New API endpoint for lyric generation
-   - SSE streaming response
-   - Frontend display component
-
-6. **Export functionality**
-   - Download edited Pivot JSON
-   - Export as subtitle file (SRT/VTT)
+6. **SSE streaming** for real-time lyric display
+7. **Export functionality** (JSON, SRT/VTT)
+8. **Region locking** for approved lyrics
 
 ---
 
@@ -402,7 +387,9 @@ Lyrics.ai/
 | BPM variance ~5% | `LibrosaAnalyzer.analyze()` | Medium | May need prior estimation |
 | Mock Demucs only | `DemucsProcessor` | Medium | Real processing needs GPU |
 | Single block rendering | `AudioEditor.tsx` | Low | Only `blocks[0]` displayed |
+| 10-syllable file +1 error | `test_precision_tuning.py` | Low | Edge case in onset detection |
+| Frontend not connected to generation | `frontend/` | High | No lyric generation UI |
 
 ---
 
-*This document was auto-generated by analyzing the project codebase against the PRD specifications.*
+*This document was last updated by analyzing the project codebase on 2025-12-28.*
