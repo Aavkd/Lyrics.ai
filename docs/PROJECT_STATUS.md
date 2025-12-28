@@ -12,7 +12,7 @@ The Flow-to-Lyrics project is currently at approximately **55% completion** of t
 
 1. ✅ **AudioEngine** - Analyzes audio, detects segments with stress/sustain
 2. ✅ **PromptEngine** - Translates PivotJSON to LLM prompts
-3. ✅ **GenerationEngine** - Generates candidates via Ollama (ministral-3)
+3. ✅ **GenerationEngine** - Generates candidates via Ollama (local or cloud)
 4. ✅ **LyricValidator** - The "Gatekeeper" that filters by syllable count and groove score
 
 The frontend remains a **read-only audio viewer** with no editing or generation capabilities.
@@ -198,6 +198,7 @@ Users can only:
 | nltk (CMU Dict) | Required | Not used directly | ⚠️ Partial |
 | Instructor/Outlines | Required for JSON | Regex-based parsing in GenerationEngine | ⚠️ Alternative |
 | Local Ollama (ministral-3) | Required | ✅ Fully integrated | ✅ Done |
+| Cloud Ollama Support | Optional | ✅ API key authentication via `OLLAMA_API_KEY` | ✅ Done |
 
 ### Frontend (Next.js / React)
 

@@ -3,20 +3,23 @@ Flow-to-Lyrics: Generation Engine
 ==================================
 Step 3 of the Tech Roadmap - The "Brain"
 
-This module handles LLM interactions with a local Ollama instance to generate
-lyric candidates from structured prompts. Model is configurable via .env file.
+This module handles LLM interactions with Ollama (local or cloud) to generate
+lyric candidates from structured prompts. Model and authentication are configurable
+via .env file.
 
 Key Features:
 - HTTP-based communication with Ollama (no custom library dependencies)
 - Robust JSON parsing for "chatty" model output
 - Mock mode for testing without Ollama
 - Configurable model and temperature settings via .env file
+- Optional API key authentication for cloud Ollama services
 
 Configuration (in .env file):
     OLLAMA_MODEL=mistral:7b     # Switch to any Ollama model
     OLLAMA_URL=http://localhost:11434
     OLLAMA_TEMPERATURE=0.7
     OLLAMA_TIMEOUT=60
+    OLLAMA_API_KEY=             # Optional: for cloud Ollama services
 """
 
 from __future__ import annotations
@@ -79,7 +82,8 @@ class GenerationEngine:
         temperature: Optional[float] = None,
         candidate_count: int = 5,
         mock_mode: bool = False,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        api_key: Optional[str] = None
     ):
         """
         Initialize the Generation Engine.
@@ -92,18 +96,32 @@ class GenerationEngine:
             candidate_count: Number of candidates to request (default: 5).
             mock_mode: If True, skip API calls and return mock data.
             timeout: Request timeout in seconds. Defaults to config.OLLAMA_TIMEOUT.
+            api_key: API key for cloud Ollama. Defaults to config.OLLAMA_API_KEY.
         """
         # Use config defaults if not explicitly provided
         self.model = model if model is not None else config.OLLAMA_MODEL
         self.base_url = (base_url if base_url is not None else config.OLLAMA_URL).rstrip("/")
         self.temperature = temperature if temperature is not None else config.OLLAMA_TEMPERATURE
         self.timeout = timeout if timeout is not None else config.OLLAMA_TIMEOUT
+        self.api_key = api_key if api_key is not None else config.OLLAMA_API_KEY
         
         self.candidate_count = candidate_count
         self.mock_mode = mock_mode
         
         # API endpoint for chat completions
         self.chat_endpoint = f"{self.base_url}/api/chat"
+    
+    def _get_headers(self) -> dict:
+        """
+        Get HTTP headers for Ollama API requests.
+        
+        Returns:
+            Dict with Content-Type and optional Authorization header.
+        """
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
     
     def generate_candidates(
         self,
@@ -147,6 +165,7 @@ class GenerationEngine:
             response = requests.post(
                 self.chat_endpoint,
                 json=payload,
+                headers=self._get_headers(),
                 timeout=self.timeout
             )
             response.raise_for_status()
@@ -324,6 +343,7 @@ class GenerationEngine:
             # Check if Ollama is running
             response = requests.get(
                 f"{self.base_url}/api/tags",
+                headers=self._get_headers(),
                 timeout=5
             )
             response.raise_for_status()

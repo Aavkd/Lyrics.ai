@@ -110,6 +110,12 @@ class Config:
         except ValueError:
             return 60
     
+    @property
+    def OLLAMA_API_KEY(self) -> str | None:
+        """API key for cloud Ollama services (None for local Ollama)."""
+        key = os.getenv("OLLAMA_API_KEY", "")
+        return key if key else None
+    
     # =========================================================================
     # AUDIO ENGINE
     # =========================================================================
@@ -155,12 +161,14 @@ class Config:
     
     def __repr__(self) -> str:
         """Return a string representation showing current config."""
+        api_key_display = "***" if self.OLLAMA_API_KEY else "(not set)"
         return (
             f"Config(\n"
             f"  OLLAMA_MODEL={self.OLLAMA_MODEL!r},\n"
             f"  OLLAMA_URL={self.OLLAMA_URL!r},\n"
             f"  OLLAMA_TEMPERATURE={self.OLLAMA_TEMPERATURE},\n"
             f"  OLLAMA_TIMEOUT={self.OLLAMA_TIMEOUT},\n"
+            f"  OLLAMA_API_KEY={api_key_display},\n"
             f"  MOCK_MODE={self.MOCK_MODE},\n"
             f"  API_HOST={self.API_HOST!r},\n"
             f"  API_PORT={self.API_PORT},\n"
@@ -173,10 +181,12 @@ class Config:
         print("\n" + "=" * 50)
         print("  🔧 Flow-to-Lyrics Configuration")
         print("=" * 50)
+        api_key_status = "✓ Set" if self.OLLAMA_API_KEY else "✗ Not set (local mode)"
         print(f"  LLM Model:    {self.OLLAMA_MODEL}")
         print(f"  Ollama URL:   {self.OLLAMA_URL}")
         print(f"  Temperature:  {self.OLLAMA_TEMPERATURE}")
         print(f"  Timeout:      {self.OLLAMA_TIMEOUT}s")
+        print(f"  API Key:      {api_key_status}")
         print(f"  Mock Mode:    {self.MOCK_MODE}")
         print(f"  API:          {self.API_HOST}:{self.API_PORT}")
         print(f"  Max Upload:   {self.MAX_FILE_SIZE_MB} MB")

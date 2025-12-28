@@ -13,6 +13,23 @@ The project is pivoting from a linear "One-Shot" pipeline to a **Dual-Workflow A
 
 **Immediate Priority (per Audio Note):** Before building the full automation, we must maximize the precision of the model on short files (1-2 bars) by integrating pitch detection and improving phonetic/rhythmic matching.
 
+### Cloud Ollama Configuration (New)
+
+The `GenerationEngine` now supports both local and cloud Ollama instances via `.env` configuration:
+
+```env
+# For LOCAL Ollama (no API key needed):
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=ministral-3:8b
+
+# For CLOUD Ollama (requires API key):
+OLLAMA_URL=https://ollama.com/api
+OLLAMA_MODEL=gemini-3-flash-preview:latest
+OLLAMA_API_KEY=your_api_key_here
+```
+
+When `OLLAMA_API_KEY` is set, the engine automatically adds `Authorization: Bearer <key>` headers to all requests.
+
 ## 2. Phase 1: The "Precision" Engine (Backend Refactor)
 
 **Goal:** Solve the accuracy issues identified in the test audio analysis.
