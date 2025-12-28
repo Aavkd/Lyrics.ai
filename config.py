@@ -213,6 +213,18 @@ class Config:
         return size
     
     @property
+    def WHISPER_USE_FULL_AUDIO(self) -> bool:
+        """Use full-audio transcription with word alignment.
+        
+        When True (default), transcribes the entire audio once and aligns
+        words to segments based on timing. Much more accurate for short
+        segments (<500ms) because Whisper has full linguistic context.
+        
+        When False, uses per-segment transcription (legacy behavior).
+        """
+        return os.getenv("WHISPER_USE_FULL_AUDIO", "true").lower() == "true"
+    
+    @property
     def PHONETIC_ENABLED(self) -> bool:
         """Enable phonetic analysis."""
         return os.getenv("PHONETIC_ENABLED", "true").lower() == "true"

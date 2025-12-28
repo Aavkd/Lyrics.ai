@@ -1,6 +1,6 @@
 # 🎵 Audio Pipeline Test Report
 
-**Generated:** 2025-12-28 20:56  
+**Generated:** 2025-12-29 00:02  
 **Test Type:** Syllable Detection Analysis (No LLM)  
 **Phoneme Analysis:** Disabled (testing audio/syllable pipeline only)
 
@@ -10,12 +10,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Files Tested | 6 |
-| Perfect Matches | 3/6 |
-| Close Matches (±1) | 4/6 |
-| Total Expected Syllables | 31 |
-| Total Detected Syllables | 35 |
-| Total Absolute Error | 6 |
+| Files Tested | 7 |
+| Perfect Matches | 3/7 |
+| Close Matches (±1) | 4/7 |
+| Total Expected Syllables | 39 |
+| Total Detected Syllables | 45 |
+| Total Absolute Error | 8 |
 
 ---
 
@@ -158,6 +158,37 @@
 
 ---
 
+### oh_ma_oh_ma_on_my_tec_nine.m4a
+
+**Status:** ❌ FAIL
+
+| Property | Value |
+|----------|-------|
+| Expected Phrase | "Oh ma oh ma on my Tec Nine" |
+| Syllable Breakdown | oh(1) ma(1) oh(1) ma(1) on(1) my(1) tec(1) nine(1) |
+| Expected Syllables | 8 |
+| Detected Syllables | 10 |
+| Error | +2 |
+| Tempo | 99.38 BPM |
+| Duration | 2.517s |
+
+**Detected Segments:**
+
+| # | Start (s) | Duration (s) | Stressed | Sustained | Pitch |
+|---|-----------|--------------|----------|-----------|-------|
+| 1 | 0.046 | 0.279 |  |  | mid |
+| 2 | 0.325 | 0.209 | 🔊 |  | low |
+| 3 | 0.534 | 0.395 |  |  | low |
+| 4 | 0.929 | 0.209 |  |  | low |
+| 5 | 1.138 | 0.488 |  | ⏸ | low |
+| 6 | 1.625 | 0.116 | 🔊 |  | low |
+| 7 | 1.741 | 0.139 |  |  | low |
+| 8 | 1.881 | 0.232 |  |  | low |
+| 9 | 2.113 | 0.139 |  |  | low |
+| 10 | 2.252 | 0.200 |  |  | low |
+
+---
+
 ### what_bout_you.m4a
 
 **Status:** ✅ PASS
@@ -188,7 +219,7 @@
 
 - **Perfect Detection (3 files):** `talk_to_me_i_said_what.m4a`, `99_problems.m4a`, `what_bout_you.m4a`
 - **Under-Detection (1 files):** `trying_to_take_my_time.m4a` (expected 6, got 5)
-- **Over-Detection (2 files):** `everybody_equal.m4a` (expected 6, got 8), `mumble_on_this_beat.m4a` (expected 5, got 8)
+- **Over-Detection (3 files):** `everybody_equal.m4a` (expected 6, got 8), `mumble_on_this_beat.m4a` (expected 5, got 8), `oh_ma_oh_ma_on_my_tec_nine.m4a` (expected 8, got 10)
 
 ### Potential Issues
 

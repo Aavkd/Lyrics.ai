@@ -447,6 +447,272 @@ class WhisperPhoneticAnalyzer:
         """Check if Whisper and g2p are available."""
         self._lazy_init()
         return self.model is not None and self.g2p is not None
+    
+    def transcribe_full_audio(self, y: np.ndarray, sr: int) -> list[dict]:
+        """
+        Transcribe full audio with word-level timestamps.
+        
+        Uses Whisper's word_timestamps feature for context-aware transcription.
+        Much more accurate than per-segment transcription for short segments.
+        
+        Args:
+            y: Full audio signal array.
+            sr: Sample rate.
+            
+        Returns:
+            List of word dicts with timing: [{"word": "hello", "start": 0.5, "end": 0.8}, ...]
+        """
+        self._lazy_init()
+        
+        if self.model is None:
+            return []
+        
+        # Whisper expects 16kHz audio
+        y_16k = resample_audio(y, sr, 16000)
+        
+        try:
+            # Transcribe with word-level timestamps
+            result = self.model.transcribe(
+                y_16k,
+                language="en",
+                fp16=False,  # CPU compatibility
+                task="transcribe",
+                word_timestamps=True,  # KEY: Get word-level timing
+                temperature=0.0,  # Deterministic output
+                condition_on_previous_text=True,  # Use context for better accuracy
+                no_speech_threshold=0.6,
+            )
+            
+            # Extract words with timing from all segments
+            words = []
+            for segment in result.get("segments", []):
+                for word_info in segment.get("words", []):
+                    words.append({
+                        "word": word_info.get("word", "").strip(),
+                        "start": word_info.get("start", 0.0),
+                        "end": word_info.get("end", 0.0),
+                    })
+            
+            print(f"[WhisperPhoneticAnalyzer] Full-audio transcribed: {len(words)} words")
+            return words
+            
+        except Exception as e:
+            print(f"[WhisperPhoneticAnalyzer] Full-audio transcription failed: {e}")
+            return []
+    
+    def _align_words_to_segments(
+        self,
+        words: list[dict],
+        onset_times: list[float],
+        durations: list[float],
+        min_overlap_ratio: float = 0.3
+    ) -> list[str]:
+        """
+        Align transcribed words to detected segments using strict sequential assignment.
+        
+        Strategy: Strict 1:1 mapping preserving temporal order.
+        
+        1. Convert words to syllables with timing, sorted by start time
+        2. Assign syllable[i] to segment[i] directly
+        3. If more syllables than segments, extra syllables are dropped
+        4. If more segments than syllables, extra segments get empty phonemes
+        
+        Args:
+            words: List of word dicts from transcribe_full_audio().
+            onset_times: Segment start times.
+            durations: Segment durations.
+            min_overlap_ratio: Not used in sequential mode, kept for API compatibility.
+            
+        Returns:
+            List of IPA strings, one per segment (exactly one syllable each).
+        """
+        if not words or not onset_times:
+            return [""] * len(onset_times)
+        
+        # Step 1: Convert words to syllables with timing
+        syllables = self._words_to_syllables_with_timing(words)
+        
+        if not syllables:
+            return [""] * len(onset_times)
+        
+        # Step 2: Sort syllables by start time (should already be sorted, but ensure it)
+        syllables.sort(key=lambda x: x["start"])
+        
+        # Step 3: Strict sequential assignment - syllable[i] → segment[i]
+        segment_phonemes = [""] * len(onset_times)
+        
+        for i in range(min(len(syllables), len(onset_times))):
+            phonemes = syllables[i].get("phonemes", "")
+            if phonemes:
+                segment_phonemes[i] = phonemes
+        
+        return segment_phonemes
+    
+    def _words_to_syllables_with_timing(self, words: list[dict]) -> list[dict]:
+        """
+        Convert words to syllables with estimated timing.
+        
+        Uses g2p_en to get phonemes, splits into syllables based on vowel sounds.
+        Follows the onset maximization principle: consonants attach to the
+        FOLLOWING vowel (e.g., "asawa" → [a] [s-a] [w-a], not [a-s] [a-w] [a]).
+        
+        Args:
+            words: List of word dicts with timing.
+            
+        Returns:
+            List of syllable dicts: [{"phonemes": "m iy", "start": 0.5, "end": 0.6}, ...]
+        """
+        if self.g2p is None:
+            return []
+        
+        syllables = []
+        
+        # ARPAbet vowels (used to detect syllable boundaries)
+        vowels = {'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'EH', 'ER', 'EY', 
+                  'IH', 'IY', 'OW', 'OY', 'UH', 'UW'}
+        
+        for word_info in words:
+            word_text = word_info.get("word", "").strip()
+            word_start = word_info.get("start", 0.0)
+            word_end = word_info.get("end", 0.0)
+            
+            if not word_text or word_end <= word_start:
+                continue
+            
+            try:
+                # Get phonemes from g2p_en
+                phonemes = self.g2p(word_text)
+                
+                # Clean phonemes (remove punctuation and stress markers)
+                clean_phonemes = []
+                for p in phonemes:
+                    if not p.strip() or p in ".,!?;:'\"-":
+                        continue
+                    clean_p = p.lower().replace('0', '').replace('1', '').replace('2', '')
+                    if clean_p:
+                        clean_phonemes.append((clean_p, p.upper().replace('0', '').replace('1', '').replace('2', '')))
+                
+                if not clean_phonemes:
+                    continue
+                
+                # Split into syllables using onset maximization principle
+                # Each syllable = (optional onset consonants) + vowel + (optional coda consonants)
+                # But in English, we prefer consonants to attach to FOLLOWING vowel
+                syllable_list = []
+                current_syllable = []
+                pending_consonants = []  # Consonants waiting for next vowel
+                
+                for clean_p, base_p in clean_phonemes:
+                    is_vowel = base_p in vowels
+                    
+                    if is_vowel:
+                        # Start new syllable if we already have a vowel in current
+                        if any(bp in vowels for _, bp in [(c, c.upper()) for c in current_syllable]):
+                            # Save current syllable WITHOUT pending consonants
+                            syllable_list.append(current_syllable)
+                            # New syllable starts with pending consonants
+                            current_syllable = pending_consonants.copy()
+                            pending_consonants = []
+                        else:
+                            # Add any pending consonants to current syllable
+                            current_syllable.extend(pending_consonants)
+                            pending_consonants = []
+                        
+                        current_syllable.append(clean_p)
+                    else:
+                        # Consonant: save for next vowel (onset maximization)
+                        # But if we already have a vowel, it might be coda
+                        has_vowel = any(p.upper().replace('0', '').replace('1', '').replace('2', '') in vowels 
+                                       for p in current_syllable)
+                        if has_vowel:
+                            # This consonant goes with NEXT syllable (onset)
+                            pending_consonants.append(clean_p)
+                        else:
+                            # No vowel yet, add to current (initial consonant cluster)
+                            current_syllable.append(clean_p)
+                
+                # Don't forget the last syllable
+                if current_syllable:
+                    current_syllable.extend(pending_consonants)  # Trailing consonants as coda
+                    syllable_list.append(current_syllable)
+                elif pending_consonants:
+                    # Edge case: only consonants, add to last syllable if exists
+                    if syllable_list:
+                        syllable_list[-1].extend(pending_consonants)
+                    else:
+                        syllable_list.append(pending_consonants)
+                
+                # If no syllables found, treat whole word as one syllable
+                if not syllable_list:
+                    phoneme_strs = [p for p, _ in clean_phonemes]
+                    if phoneme_strs:
+                        syllable_list = [phoneme_strs]
+                
+                # Distribute time across syllables
+                num_syllables = len(syllable_list)
+                if num_syllables > 0:
+                    word_duration = word_end - word_start
+                    syl_duration = word_duration / num_syllables
+                    
+                    for i, syl_phonemes in enumerate(syllable_list):
+                        syllables.append({
+                            "phonemes": " ".join(syl_phonemes),
+                            "start": word_start + i * syl_duration,
+                            "end": word_start + (i + 1) * syl_duration,
+                            "word": word_text,
+                        })
+                        
+            except Exception as e:
+                print(f"[WhisperPhoneticAnalyzer] Syllable split failed for '{word_text}': {e}")
+                continue
+        
+        return syllables
+    
+    def analyze_segments_full_audio(
+        self,
+        y: np.ndarray,
+        sr: int,
+        onset_times: list[float],
+        durations: list[float]
+    ) -> list[str]:
+        """
+        Analyze segments using full-audio transcription with word alignment.
+        
+        This is the recommended method for accurate phoneme detection.
+        Transcribes the full audio once, then aligns words to segments.
+        
+        Args:
+            y: Full audio signal.
+            sr: Sample rate.
+            onset_times: List of segment start times.
+            durations: List of segment durations.
+            
+        Returns:
+            List of IPA strings, one per segment.
+        """
+        self._lazy_init()
+        
+        if self.model is None or self.g2p is None:
+            return [""] * len(onset_times)
+        
+        # Step 1: Transcribe full audio with word timestamps
+        words = self.transcribe_full_audio(y, sr)
+        
+        if not words:
+            print("[WhisperPhoneticAnalyzer] No words detected, falling back to per-segment")
+            return [""] * len(onset_times)
+        
+        # Step 2: Align words to segments
+        phonemes = self._align_words_to_segments(words, onset_times, durations)
+        
+        # Log statistics
+        detected = sum(1 for p in phonemes if p)
+        total = len(phonemes)
+        if total > 0:
+            rate = detected / total * 100
+            print(f"[WhisperPhoneticAnalyzer] Full-audio alignment: {detected}/{total} ({rate:.1f}%)")
+        
+        return phonemes
 
 
 class PhoneticAnalyzer:
@@ -510,6 +776,13 @@ class PhoneticAnalyzer:
         self._whisper_analyzer = None  # WhisperPhoneticAnalyzer (lazy loaded)
         self._initialized = False
         self._use_whisper = (self.phonetic_model == "whisper")
+        
+        # Load full-audio mode config
+        try:
+            from config import config
+            self._use_full_audio = config.WHISPER_USE_FULL_AUDIO
+        except ImportError:
+            self._use_full_audio = True  # Default to full-audio for better accuracy
     
     def _lazy_init(self):
         """
@@ -693,6 +966,23 @@ class PhoneticAnalyzer:
                         phonemes_list.append("[mid]")
                 return phonemes_list
             return [""] * len(onset_times)
+        
+        # NEW: Use full-audio mode for Whisper (Phase D - improved accuracy)
+        if self._use_whisper and self._whisper_analyzer and self._use_full_audio:
+            print("[PhoneticAnalyzer] Using full-audio transcription mode")
+            phonemes = self._whisper_analyzer.analyze_segments_full_audio(y, sr, onset_times, durations)
+            
+            # Apply fallback for any segments that didn't get phonemes
+            if self.fallback_enabled:
+                for i, p in enumerate(phonemes):
+                    if not p:
+                        start_sample = max(0, int(onset_times[i] * sr))
+                        end_sample = min(len(y), int((onset_times[i] + durations[i]) * sr))
+                        if end_sample > start_sample:
+                            segment_audio = y[start_sample:end_sample]
+                            phonemes[i] = classify_sound_type(segment_audio, sr)
+            
+            return phonemes
         
         # Calculate padding in samples
         padding_samples = int(self.padding * sr)

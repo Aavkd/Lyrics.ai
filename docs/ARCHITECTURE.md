@@ -1,7 +1,7 @@
 # 🏗️ Flow-to-Lyrics Architecture
 
 **Last Updated**: 2025-12-28  
-**Version**: 2.1 (Post Syllable Detection Overhaul)  
+**Version**: 2.2 (Post Phase D - Full-Audio Whisper + Syllable Alignment)  
 **Context**: Technical documentation for "Flow-to-Lyrics" MVP.
 
 ---
@@ -23,6 +23,10 @@ graph TD
         Engine -->|Isolation| Demucs[Demucs - Mock/Real]
         Engine -->|Analysis| Librosa[Librosa]
         Librosa -->|BPM, Onsets, Pitch| Formatter[PivotFormatter]
+        
+        Formatter -->|Full Audio| Whisper[WhisperPhoneticAnalyzer]
+        Whisper -->|Word Timestamps| Syllables[Syllable Alignment]
+        Syllables -->|IPA per Segment| Formatter
         
         Formatter -->|PivotJSON| API
         
@@ -47,12 +51,12 @@ graph TD
 
 ### 1. Backend Service (`/`)
 **Role**: Audio Processing, DSP, LLM Integration, and Validation.  
-**Tech**: Python 3.10+, FastAPI, Librosa, Demucs, g2p_en, Requests.
+**Tech**: Python 3.10+, FastAPI, Librosa, Demucs, Whisper, g2p_en, Requests.
 
 | File | Type | Lines | Responsibilities |
 |------|------|-------|------------------|
 | `main.py` | API Entry | ~223 | FastAPI app, CORS, `/upload` endpoint, temp file mgmt. |
-| `audio_engine.py` | DSP Core | ~1600 | **DemucsProcessor**: Vocal isolation.<br>**WhisperPhoneticAnalyzer**: Whisper+g2p transcription (Phase C).<br>**LibrosaAnalyzer**: Adaptive onset detection (spectral + energy), BPM, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection, segment splitting, breath filtering. |
+| `audio_engine.py` | DSP Core | ~1900 | **DemucsProcessor**: Vocal isolation.<br>**WhisperPhoneticAnalyzer**: Full-audio transcription with word timestamps (Phase D), syllable splitting with onset maximization, sequential alignment.<br>**PhoneticAnalyzer**: Backend selection (Whisper/Allosaurus), fallback classification.<br>**LibrosaAnalyzer**: Adaptive onset detection (spectral + energy), BPM, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection, segment splitting, breath filtering. |
 | `prompt_engine.py` | Translator | ~351 | Converts PivotJSON → LLM prompts with stress/sustain/pitch guidance. |
 | `generation_engine.py` | LLM Brain | ~421 | Ollama HTTP integration (local + cloud), JSON parsing. |
 | `validator.py` | Gatekeeper | ~365 | g2p_en phonetic validation, syllable counting, groove scoring. |

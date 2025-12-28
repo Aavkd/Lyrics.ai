@@ -63,11 +63,17 @@ EXPECTED_SYLLABLES = {
         "syllables": 6,
         "breakdown": "Try(1) ing(1) to(1) take(1) my(1) time(1)"
     },
+    "oh_ma_oh_ma_on_my_tec_nine.m4a": {
+        "phrase": "Oh ma oh ma on my Tec Nine",
+        "syllables": 8,
+        "breakdown": "oh(1) ma(1) oh(1) ma(1) on(1) my(1) tec(1) nine(1)"
+    },
     "what_bout_you.m4a": {
         "phrase": "What 'bout you",
         "syllables": 3,
         "breakdown": "What(1) 'bout(1) you(1)"
     }
+    
 }
 
 

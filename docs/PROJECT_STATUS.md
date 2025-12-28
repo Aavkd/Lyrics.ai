@@ -1,14 +1,14 @@
 # 📊 Flow-to-Lyrics: Project Status Report
 
 **Last Updated**: 2025-12-28  
-**Version**: MVP - English Only (Post Phase C - Whisper Integration)  
+**Version**: MVP - English Only (Post Phase D - Full-Audio Whisper)  
 **Objective**: Transform informal vocal flows ("yaourt") into coherent rap/song lyrics with strict rhythmic precision and human validation.
 
 ---
 
 ## 📋 Executive Summary
 
-The Flow-to-Lyrics project is currently at approximately **70% completion** of the MVP roadmap. The **backend pipeline is COMPLETE** with all 5 core engines working end-to-end:
+The Flow-to-Lyrics project is currently at approximately **75% completion** of the MVP roadmap. The **backend pipeline is COMPLETE** with all 5 core engines working end-to-end:
 
 1. ✅ **AudioEngine** - Analyzes audio, detects segments with stress/sustain/pitch
 2. ✅ **PromptEngine** - Translates PivotJSON to LLM prompts with melodic guidance
@@ -16,6 +16,7 @@ The Flow-to-Lyrics project is currently at approximately **70% completion** of t
 4. ✅ **LyricValidator** - The "Gatekeeper" that filters by syllable count and groove score
 5. ✅ **CorePipeline** - End-to-end orchestrator with multi-candidate exposure
 6. ✅ **WhisperPhoneticAnalyzer** - Whisper + g2p_en for phonetic transcription (Phase C)
+7. ✅ **Full-Audio Syllable Alignment** - Word-level timestamps with syllable distribution (Phase D)
 
 The frontend remains a **read-only audio viewer** with no editing or generation capabilities exposed.
 
