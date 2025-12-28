@@ -371,6 +371,11 @@ class PhoneticAnalyzer:
 class LibrosaAnalyzer:
     """
     Librosa-based audio analysis for BPM and onset detection.
+    
+    Enhanced with adaptive onset detection strategies:
+    1. Spectral flux onset detection (primary)
+    2. Energy-based onset detection (secondary, optional)
+    3. Merged, deduplicated onset times
     """
     
     def __init__(self, sample_rate: int = 22050):
@@ -381,10 +386,142 @@ class LibrosaAnalyzer:
             sample_rate: Sample rate for audio loading (default: 22050 Hz).
         """
         self.sample_rate = sample_rate
+        
+        # Load configuration (import here to avoid circular imports)
+        try:
+            from config import config
+            self.onset_delta = config.ONSET_DELTA
+            self.use_energy_detection = config.ONSET_USE_ENERGY
+            self.onset_wait = config.ONSET_WAIT
+        except ImportError:
+            # Fallback defaults if config not available
+            self.onset_delta = 0.05
+            self.use_energy_detection = True
+            self.onset_wait = 1
+    
+    def _detect_onsets_spectral(
+        self, 
+        y: np.ndarray, 
+        sr: int,
+        onset_env: np.ndarray
+    ) -> np.ndarray:
+        """
+        Detect onsets using spectral flux method.
+        
+        Args:
+            y: Audio signal.
+            sr: Sample rate.
+            onset_env: Pre-computed onset strength envelope.
+            
+        Returns:
+            Array of onset times in seconds.
+        """
+        onset_frames = librosa.onset.onset_detect(
+            onset_envelope=onset_env,
+            sr=sr,
+            backtrack=True,
+            wait=self.onset_wait,
+            pre_max=1,
+            post_max=1,
+            pre_avg=1,
+            post_avg=1,
+            delta=self.onset_delta,
+            units='frames'
+        )
+        return librosa.frames_to_time(onset_frames, sr=sr)
+    
+    def _detect_onsets_energy(
+        self,
+        y: np.ndarray,
+        sr: int,
+        hop_length: int = 512
+    ) -> np.ndarray:
+        """
+        Detect onsets using energy-based (RMS) peak detection.
+        
+        This is a secondary detection strategy that catches onsets
+        that spectral flux might miss, especially in continuous speech.
+        
+        Args:
+            y: Audio signal.
+            sr: Sample rate.
+            hop_length: Hop length for RMS computation.
+            
+        Returns:
+            Array of onset times in seconds.
+        """
+        # Compute RMS energy
+        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
+        
+        # Simple peak detection: find local maxima above threshold
+        # Use a more sensitive threshold for energy peaks
+        rms_normalized = rms / (np.max(rms) + 1e-10)
+        
+        # Find peaks: points higher than neighbors and above threshold
+        peaks = []
+        threshold = 0.15  # Relative threshold for energy peaks
+        min_distance = int(0.08 * sr / hop_length)  # Min 80ms between peaks
+        
+        last_peak_idx = -min_distance
+        for i in range(1, len(rms_normalized) - 1):
+            if i - last_peak_idx < min_distance:
+                continue
+            
+            # Check if local maximum and above threshold
+            if (rms_normalized[i] > rms_normalized[i-1] and 
+                rms_normalized[i] > rms_normalized[i+1] and
+                rms_normalized[i] > threshold):
+                peaks.append(i)
+                last_peak_idx = i
+        
+        # Convert frames to times
+        if peaks:
+            return librosa.frames_to_time(np.array(peaks), sr=sr, hop_length=hop_length)
+        return np.array([])
+    
+    def _merge_onsets(
+        self,
+        spectral_onsets: np.ndarray,
+        energy_onsets: np.ndarray,
+        min_distance: float = 0.05
+    ) -> list[float]:
+        """
+        Merge onsets from multiple detection strategies.
+        
+        Removes duplicates where two onsets are within min_distance of each other.
+        When duplicates exist, keeps the earlier onset.
+        
+        Args:
+            spectral_onsets: Onset times from spectral flux detection.
+            energy_onsets: Onset times from energy-based detection.
+            min_distance: Minimum time between onsets to consider them different.
+            
+        Returns:
+            Sorted, deduplicated list of onset times.
+        """
+        # Combine all onsets
+        all_onsets = np.concatenate([spectral_onsets, energy_onsets])
+        
+        if len(all_onsets) == 0:
+            return []
+        
+        # Sort by time
+        all_onsets = np.sort(all_onsets)
+        
+        # Deduplicate: keep onsets that are at least min_distance apart
+        unique_onsets = [all_onsets[0]]
+        for onset in all_onsets[1:]:
+            if onset - unique_onsets[-1] >= min_distance:
+                unique_onsets.append(onset)
+        
+        return unique_onsets
     
     def analyze(self, audio_path: str) -> AnalysisResult:
         """
-        Analyze audio file for tempo and onsets.
+        Analyze audio file for tempo and onsets using adaptive detection.
+        
+        Uses multiple onset detection strategies and merges results
+        for more robust syllable identification.
         
         Args:
             audio_path: Path to audio file.
@@ -407,30 +544,32 @@ class LibrosaAnalyzer:
         else:
             tempo = float(tempo)
         
-        # Compute onset strength envelope
+        # Compute onset strength envelope (used by spectral detection)
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         
-        # Detect onsets using OPTIMIZED "Less Sensitive" config
-        # (Found via precision tuning on user's audio samples - see tests/test_precision_tuning.py)
-        # This reduces false positive syllable detections
-        onset_frames = librosa.onset.onset_detect(
-            onset_envelope=onset_env,
-            sr=sr,
-            backtrack=True,
-            wait=1,
-            pre_max=1,
-            post_max=1,
-            pre_avg=1,
-            post_avg=1,
-            delta=0.1,  # Higher threshold = fewer false positives
-            units='frames'
-        )
-        onset_times = librosa.frames_to_time(onset_frames, sr=sr)
+        # Primary detection: Spectral flux
+        spectral_onsets = self._detect_onsets_spectral(y, sr, onset_env)
+        print(f"[LibrosaAnalyzer] Spectral flux: {len(spectral_onsets)} onsets (delta={self.onset_delta})")
+        
+        # Secondary detection: Energy-based (FALLBACK only)
+        # Only use if spectral detection found very few onsets (< 3)
+        # This prevents over-detection while providing safety net for near-silence
+        if self.use_energy_detection and len(spectral_onsets) < 3:
+            energy_onsets = self._detect_onsets_energy(y, sr)
+            print(f"[LibrosaAnalyzer] Energy-based (fallback): {len(energy_onsets)} onsets")
+            
+            # Merge and deduplicate
+            onset_times = self._merge_onsets(spectral_onsets, energy_onsets)
+            print(f"[LibrosaAnalyzer] Merged (deduped): {len(onset_times)} onsets")
+        else:
+            onset_times = spectral_onsets.tolist()
+            if self.use_energy_detection:
+                print(f"[LibrosaAnalyzer] Energy detection skipped (spectral found {len(spectral_onsets)} onsets)")
         
         return AnalysisResult(
             tempo=tempo,
             duration=duration,
-            onset_times=onset_times.tolist(),
+            onset_times=onset_times,
             sample_rate=sr,
             audio_signal=y
         )
@@ -444,10 +583,11 @@ class PivotFormatter:
     """
     Formats analysis results into the Pivot JSON structure.
     
-    Enhanced with Step 1 of Tech Roadmap:
+    Enhanced with:
     - Stress detection via RMS amplitude analysis
     - Sustain detection via duration thresholds
     - Phonetic analysis via Allosaurus (IPA extraction)
+    - Automatic segment splitting for long segments
     """
     
     def __init__(
@@ -456,6 +596,7 @@ class PivotFormatter:
         stress_threshold: float = 1.2,
         stress_window_size: int = 5,
         sustain_threshold: float = 0.4,
+        max_segment_duration: float = None,
         phonetic_analyzer: PhoneticAnalyzer = None
     ):
         """
@@ -470,6 +611,8 @@ class PivotFormatter:
                                 for local average calculation.
             sustain_threshold: Duration in seconds above which a segment
                                is considered sustained (long vowel).
+            max_segment_duration: Maximum segment duration before automatic
+                                  splitting. If None, loads from config.
             phonetic_analyzer: PhoneticAnalyzer instance for IPA extraction.
                                If None, phonetic analysis will be skipped.
         """
@@ -478,6 +621,147 @@ class PivotFormatter:
         self.stress_window_size = stress_window_size
         self.sustain_threshold = sustain_threshold
         self.phonetic_analyzer = phonetic_analyzer
+        
+        # Load max_segment_duration from config if not provided
+        if max_segment_duration is None:
+            try:
+                from config import config
+                self.max_segment_duration = config.MAX_SEGMENT_DURATION
+            except ImportError:
+                self.max_segment_duration = 0.5
+        else:
+            self.max_segment_duration = max_segment_duration
+    
+    def _find_energy_valleys(
+        self,
+        y: np.ndarray,
+        sr: int,
+        segment_start: float,
+        segment_end: float,
+        min_valley_spacing: float = 0.08
+    ) -> list[float]:
+        """
+        Find local energy minima within a segment for splitting.
+        
+        Identifies points where energy dips, which typically correspond
+        to boundaries between syllables within a long segment.
+        
+        Args:
+            y: Audio signal.
+            sr: Sample rate.
+            segment_start: Segment start time in seconds.
+            segment_end: Segment end time in seconds.
+            min_valley_spacing: Minimum time between valleys.
+            
+        Returns:
+            List of valley times (potential split points).
+        """
+        start_sample = int(segment_start * sr)
+        end_sample = int(segment_end * sr)
+        
+        # Clamp to valid range
+        start_sample = max(0, start_sample)
+        end_sample = min(len(y), end_sample)
+        
+        if end_sample <= start_sample:
+            return []
+        
+        segment_audio = y[start_sample:end_sample]
+        
+        # Compute RMS energy with small hop for fine resolution
+        hop_length = 256
+        rms = librosa.feature.rms(y=segment_audio, hop_length=hop_length)[0]
+        
+        if len(rms) < 3:
+            return []
+        
+        # Normalize RMS
+        rms_normalized = rms / (np.max(rms) + 1e-10)
+        
+        # Find local minima (valleys)
+        valleys = []
+        min_distance_frames = int(min_valley_spacing * sr / hop_length)
+        
+        last_valley_idx = -min_distance_frames
+        for i in range(1, len(rms_normalized) - 1):
+            if i - last_valley_idx < min_distance_frames:
+                continue
+            
+            # Check if local minimum
+            if (rms_normalized[i] < rms_normalized[i-1] and 
+                rms_normalized[i] < rms_normalized[i+1] and
+                rms_normalized[i] < 0.5):  # Below 50% of max energy
+                
+                # Convert frame to time (relative to segment start)
+                valley_time = segment_start + (i * hop_length / sr)
+                
+                # Only include valleys that are well inside the segment
+                margin = 0.05  # 50ms from edges
+                if segment_start + margin < valley_time < segment_end - margin:
+                    valleys.append(valley_time)
+                    last_valley_idx = i
+        
+        return valleys
+    
+    def _split_long_segments(
+        self,
+        onset_times: list[float],
+        durations: list[float],
+        y: np.ndarray,
+        sr: int
+    ) -> tuple[list[float], list[float]]:
+        """
+        Split segments longer than max_segment_duration at energy valleys.
+        
+        Prevents multi-syllable segments by subdividing long segments
+        at natural break points (energy valleys).
+        
+        Args:
+            onset_times: Original onset times.
+            durations: Original segment durations.
+            y: Audio signal for energy analysis.
+            sr: Sample rate.
+            
+        Returns:
+            Tuple of (new_onset_times, new_durations) with splits applied.
+        """
+        if y is None:
+            return onset_times, durations
+        
+        new_onsets = []
+        new_durations = []
+        split_count = 0
+        
+        for onset, duration in zip(onset_times, durations):
+            if duration <= self.max_segment_duration:
+                # Segment is short enough, keep as-is
+                new_onsets.append(onset)
+                new_durations.append(duration)
+            else:
+                # Segment is too long, try to split at energy valleys
+                segment_end = onset + duration
+                valleys = self._find_energy_valleys(y, sr, onset, segment_end)
+                
+                if not valleys:
+                    # No good split points found, keep original
+                    new_onsets.append(onset)
+                    new_durations.append(duration)
+                else:
+                    # Split segment at valleys
+                    all_points = [onset] + valleys + [segment_end]
+                    
+                    for i in range(len(all_points) - 1):
+                        sub_onset = all_points[i]
+                        sub_duration = all_points[i + 1] - sub_onset
+                        new_onsets.append(sub_onset)
+                        new_durations.append(sub_duration)
+                    
+                    split_count += 1
+        
+        if split_count > 0:
+            print(f"[PivotFormatter] Split {split_count} long segments -> {len(new_onsets)} total segments")
+        
+        return new_onsets, new_durations
     
     def _calculate_segment_rms(
         self, 
@@ -663,6 +947,8 @@ class PivotFormatter:
         """
         Format analysis results into Pivot JSON with stress/sustain/pitch detection.
         
+        Includes automatic splitting of long segments at energy valleys.
+        
         Args:
             analysis: AnalysisResult from LibrosaAnalyzer.
             
@@ -681,6 +967,9 @@ class PivotFormatter:
             else:
                 duration = self.default_segment_duration
             durations.append(duration)
+        
+        # Split long segments at energy valleys (prevents multi-syllable segments)
+        onset_times, durations = self._split_long_segments(onset_times, durations, y, sr)
         
         # Calculate RMS amplitude for each segment
         rms_values = []

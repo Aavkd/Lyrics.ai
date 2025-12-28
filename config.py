@@ -125,6 +125,57 @@ class Config:
         """Enable mock mode (skips Demucs)."""
         return os.getenv("MOCK_MODE", "true").lower() == "true"
     
+    @property
+    def ONSET_DELTA(self) -> float:
+        """Onset detection sensitivity threshold.
+        
+        Lower values = more sensitive (more onsets detected).
+        Higher values = less sensitive (fewer false positives).
+        
+        Recommended range: 0.03 (very sensitive) to 0.15 (conservative).
+        Default: 0.05 (balanced for vocals).
+        """
+        try:
+            return float(os.getenv("ONSET_DELTA", "0.05"))
+        except ValueError:
+            return 0.05
+    
+    @property
+    def ONSET_USE_ENERGY(self) -> bool:
+        """Use energy-based onset detection in addition to spectral flux.
+        
+        When enabled, combines spectral flux detection with energy peak
+        detection for more robust syllable identification.
+        """
+        return os.getenv("ONSET_USE_ENERGY", "true").lower() == "true"
+    
+    @property
+    def MAX_SEGMENT_DURATION(self) -> float:
+        """Maximum segment duration before automatic splitting.
+        
+        Segments longer than this threshold will be split at energy
+        valleys to prevent multi-syllable segments.
+        
+        Default: 1.0 seconds. Only very long segments will be split.
+        (Typical syllables are 0.1-0.4s, sustained notes can be 0.5-0.8s)
+        """
+        try:
+            return float(os.getenv("MAX_SEGMENT_DURATION", "1.0"))
+        except ValueError:
+            return 1.0
+    
+    @property
+    def ONSET_WAIT(self) -> int:
+        """Minimum frames between consecutive detected onsets.
+        
+        Helps prevent detecting the same event multiple times.
+        Default: 1 frame.
+        """
+        try:
+            return int(os.getenv("ONSET_WAIT", "1"))
+        except ValueError:
+            return 1
+    
     # =========================================================================
     # SERVER CONFIGURATION
     # =========================================================================

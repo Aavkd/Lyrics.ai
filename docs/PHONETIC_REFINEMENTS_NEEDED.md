@@ -28,8 +28,8 @@ The `LibrosaAnalyzer` onset detection is configured with conservative parameters
 
 ### Proposed Fixes
 1. **Tune onset parameters**: Lower `delta` threshold for more sensitive detection
-2. **Add manual syllable count override**: Let user specify expected syllable count
-3. **Add Tap-to-Rhythm**: Let user manually tap syllable onsets (already in roadmap)
+2. **Add manual syllable count override**: Let user specify expected syllable count (will be implemented later)
+3. **Add Tap-to-Rhythm**: Let user manually tap syllable onsets (already in roadmap, will be implemented later)
 4. **Use multiple detection strategies**: Combine spectral flux with energy-based onset detection
 
 ---
