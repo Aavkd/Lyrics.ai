@@ -289,39 +289,131 @@ def test_pipeline_initialization():
 # MAIN ENTRY POINT
 # =============================================================================
 
-if __name__ == "__main__":
+def run_single_file(audio_file: str):
+    """Run the pipeline on a single audio file."""
     print("\n" + "=" * 70)
-    print("  🧪 FLOW-TO-LYRICS: END-TO-END TEST SUITE")
+    print(f"  🎵 FLOW-TO-LYRICS: END-TO-END TEST")
+    print(f"  Audio: {audio_file}")
     print("=" * 70)
     
-    # Run all tests manually for detailed output
-    all_passed = True
+    if not os.path.exists(audio_file):
+        print(f"\n   ❌ File not found: {audio_file}")
+        return
     
-    tests = [
-        ("Syllable Counting", test_validator_syllable_counting),
-        ("Stress Extraction", test_validator_stress_extraction),
-        ("Groove Score", test_validator_groove_score),
-        ("Validator Logic", test_validator_logic),
-        ("Best Candidate Selection", test_get_best_candidate),
-        ("Pipeline Initialization", test_pipeline_initialization),
-        ("Invalid File Handling", test_pipeline_with_invalid_file),
-        ("Full Pipeline", test_full_pipeline_execution),
-    ]
+    # Check Ollama availability
+    test_pipeline = CorePipeline(mock_mode=True)
+    ollama_available = False
+    try:
+        ollama_available = test_pipeline.generation_engine.test_connection()
+        if ollama_available:
+            print("\n   ✓ Ollama available - using REAL LLM generation")
+        else:
+            print("\n   ⚠️ Ollama not available - using mock mode")
+    except Exception as e:
+        print(f"\n   ⚠️ Could not test Ollama connection: {e}")
     
-    for name, test_func in tests:
-        try:
-            test_func()
-            print(f"\n   ✅ {name}: PASSED")
-        except AssertionError as e:
-            print(f"\n   ❌ {name}: FAILED - {e}")
-            all_passed = False
-        except Exception as e:
-            print(f"\n   ❌ {name}: ERROR - {e}")
-            all_passed = False
-    
-    print("\n" + "=" * 70)
-    if all_passed:
-        print("  ✅ ALL TESTS PASSED!")
+    # Create pipeline
+    if ollama_available:
+        from audio_engine import AudioEngine
+        from generation_engine import GenerationEngine
+        from prompt_engine import PromptEngine
+        from validator import LyricValidator
+        
+        pipeline = CorePipeline.__new__(CorePipeline)
+        pipeline.audio_engine = AudioEngine(mock_mode=True)
+        pipeline.prompt_engine = PromptEngine()
+        pipeline.generation_engine = GenerationEngine(mock_mode=False)
+        pipeline.validator = LyricValidator()
+        pipeline.mock_mode = False
+        print("   ✓ Pipeline: Mock Audio + REAL LLM")
     else:
-        print("  ⚠️ SOME TESTS FAILED!")
-    print("=" * 70 + "\n")
+        pipeline = CorePipeline(mock_mode=True)
+        print("   ✓ Pipeline: Full Mock Mode")
+    
+    try:
+        best_lyric, score = pipeline.run_pipeline(audio_file)
+        
+        print("\n" + "=" * 70)
+        print(f"  🏆 RESULT")
+        print("=" * 70)
+        print(f"  Best Lyric: {best_lyric if best_lyric else '(none found)'}")
+        print(f"  Score: {score:.2f}")
+        print("=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n   ❌ Pipeline failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Flow-to-Lyrics End-to-End Tests",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python tests/test_end_to_end.py                    # Run all tests
+  python tests/test_end_to_end.py --file audio.mp3  # Test specific file
+  python tests/test_end_to_end.py "audio samples/talk_to_me_i_said_what.m4a"
+        """
+    )
+    parser.add_argument(
+        "audio_file",
+        nargs="?",
+        default=None,
+        help="Path to audio file to test (if not provided, runs all tests)"
+    )
+    parser.add_argument(
+        "--file", "-f",
+        dest="audio_file_flag",
+        default=None,
+        help="Path to audio file to test (alternative syntax)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Use either positional or flag argument
+    audio_file = args.audio_file or args.audio_file_flag
+    
+    if audio_file:
+        # Run single file test
+        run_single_file(audio_file)
+    else:
+        # Run all tests
+        print("\n" + "=" * 70)
+        print("  🧪 FLOW-TO-LYRICS: END-TO-END TEST SUITE")
+        print("=" * 70)
+        
+        all_passed = True
+        
+        tests = [
+            ("Syllable Counting", test_validator_syllable_counting),
+            ("Stress Extraction", test_validator_stress_extraction),
+            ("Groove Score", test_validator_groove_score),
+            ("Validator Logic", test_validator_logic),
+            ("Best Candidate Selection", test_get_best_candidate),
+            ("Pipeline Initialization", test_pipeline_initialization),
+            ("Invalid File Handling", test_pipeline_with_invalid_file),
+            ("Full Pipeline", test_full_pipeline_execution),
+        ]
+        
+        for name, test_func in tests:
+            try:
+                test_func()
+                print(f"\n   ✅ {name}: PASSED")
+            except AssertionError as e:
+                print(f"\n   ❌ {name}: FAILED - {e}")
+                all_passed = False
+            except Exception as e:
+                print(f"\n   ❌ {name}: ERROR - {e}")
+                all_passed = False
+        
+        print("\n" + "=" * 70)
+        if all_passed:
+            print("  ✅ ALL TESTS PASSED!")
+        else:
+            print("  ⚠️ SOME TESTS FAILED!")
+        print("=" * 70 + "\n")
+

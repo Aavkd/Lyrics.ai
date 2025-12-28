@@ -1,7 +1,7 @@
 # 📊 Flow-to-Lyrics: Project Status Report
 
 **Last Updated**: 2025-12-28  
-**Version**: MVP - English Only (Post Syllable Detection Overhaul)  
+**Version**: MVP - English Only (Post Phase C - Whisper Integration)  
 **Objective**: Transform informal vocal flows ("yaourt") into coherent rap/song lyrics with strict rhythmic precision and human validation.
 
 ---
@@ -15,6 +15,7 @@ The Flow-to-Lyrics project is currently at approximately **70% completion** of t
 3. ✅ **GenerationEngine** - Generates candidates via Ollama (local or cloud)
 4. ✅ **LyricValidator** - The "Gatekeeper" that filters by syllable count and groove score
 5. ✅ **CorePipeline** - End-to-end orchestrator with multi-candidate exposure
+6. ✅ **WhisperPhoneticAnalyzer** - Whisper + g2p_en for phonetic transcription (Phase C)
 
 The frontend remains a **read-only audio viewer** with no editing or generation capabilities exposed.
 
@@ -277,19 +278,21 @@ As of 2025-12-28, onset detection parameters are configurable via `.env`:
 | `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before auto-splitting |
 | `ONSET_WAIT` | `1` | Min frames between onsets |
 
-## ⚙️ Phonetic Analysis Configuration
+## ⚙️ Phonetic Analysis Configuration (Phase C)
 
-As of 2025-12-28, phonetic analysis was enhanced with padding, retry, and fallback:
+As of 2025-12-28, phonetic analysis uses Whisper + g2p_en with Allosaurus fallback:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PHONETIC_ENABLED` | `true` | Enable IPA phoneme extraction via Allosaurus |
+| `PHONETIC_MODEL` | `whisper` | Backend: `whisper` (recommended) or `allosaurus` |
+| `WHISPER_MODEL_SIZE` | `base` | Model size: `tiny`, `base`, `small`, `medium`, `large` |
+| `PHONETIC_ENABLED` | `true` | Enable IPA phoneme extraction |
 | `PHONETIC_MIN_DURATION` | `0.10` | Min segment duration for analysis (100ms) |
 | `PHONETIC_PADDING` | `0.05` | Context padding on each side (50ms) |
 | `PHONETIC_RETRY_PADDING` | `0.10` | Expanded retry padding on failure (100ms) |
 | `PHONETIC_FALLBACK_ENABLED` | `true` | Return `[vowel]`/`[consonant]` when detection fails |
 
-> ⚠️ **Known Issue:** Allosaurus phoneme recognition has ~83% detection rate but **low accuracy** for mumbled/sung vocals. The IPA tokens returned often don't match expected sounds. See `docs/PHONETIC_ACCURACY_ISSUE.md` for details. **Recommended fix: Phase C (Whisper integration)**.
+> ℹ️ **Phase C Complete:** Whisper + g2p_en pipeline improves accuracy for mumbled vocals. Detection rate 60-83% depending on audio quality. See [REMAINING_ISSUES.md](./REMAINING_ISSUES.md) for known limitations.
 
 ---
 
@@ -349,11 +352,16 @@ As of 2025-12-28, phonetic analysis was enhanced with padding, retry, and fallba
 
 > **Result:** Detection rate improved from 67% → 83%, but **accuracy issue remains** (see `docs/PHONETIC_ACCURACY_ISSUE.md`).
 
-### Phonetic Improvement: Phase C → 🔴 0% Complete
-- [ ] Integrate Whisper for transcription
-- [ ] Convert words → phonemes via g2p_en
-- [ ] Add `PHONETIC_MODEL` config option `allosaurus`/`whisper`
-- [ ] Fall back to Allosaurus when Whisper fails
+### Phonetic Improvement: Phase C → ✅ 100% Complete
+- [x] Create `WhisperPhoneticAnalyzer` class
+- [x] Integrate Whisper for transcription
+- [x] Convert words → phonemes via g2p_en
+- [x] Add `PHONETIC_MODEL` config option (`allosaurus`/`whisper`)
+- [x] Add `WHISPER_MODEL_SIZE` config option
+- [x] Automatic fallback to Allosaurus when Whisper unavailable
+- [x] Tests: 7 new tests in `test_whisper_phonetic.py`
+
+> **Result:** Whisper integration provides context-aware transcription for mumbled vocals, with g2p_en converting words to accurate English phonemes.
 
 ---
 

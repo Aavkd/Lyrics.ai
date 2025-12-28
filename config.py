@@ -177,12 +177,44 @@ class Config:
             return 1
     
     # =========================================================================
-    # PHONETIC ANALYSIS (Allosaurus)
+    # PHONETIC ANALYSIS
     # =========================================================================
     
     @property
+    def PHONETIC_MODEL(self) -> str:
+        """Phonetic recognition backend.
+        
+        Options:
+            - "whisper": Whisper + g2p_en (recommended for mumbled/sung vocals)
+            - "allosaurus": Universal phone recognizer (original)
+        
+        Default: "whisper" for better accuracy on non-standard speech.
+        """
+        model = os.getenv("PHONETIC_MODEL", "whisper").lower()
+        if model not in ("whisper", "allosaurus"):
+            return "whisper"  # Default to whisper if invalid
+        return model
+    
+    @property
+    def WHISPER_MODEL_SIZE(self) -> str:
+        """Whisper model size (only used when PHONETIC_MODEL=whisper).
+        
+        Options:
+            - "tiny": 39MB, fastest, least accurate
+            - "base": 140MB, balanced (default)
+            - "small": 244MB, good accuracy
+            - "medium": 769MB, high accuracy
+            - "large": 2.9GB, highest accuracy
+        """
+        size = os.getenv("WHISPER_MODEL_SIZE", "base").lower()
+        valid_sizes = ("tiny", "base", "small", "medium", "large")
+        if size not in valid_sizes:
+            return "base"  # Default to base if invalid
+        return size
+    
+    @property
     def PHONETIC_ENABLED(self) -> bool:
-        """Enable phonetic analysis via Allosaurus."""
+        """Enable phonetic analysis."""
         return os.getenv("PHONETIC_ENABLED", "true").lower() == "true"
     
     @property

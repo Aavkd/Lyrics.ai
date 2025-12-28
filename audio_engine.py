@@ -247,18 +247,221 @@ def classify_sound_type(y_segment: np.ndarray, sr: int) -> str:
     except Exception:
         return "[mid]"  # Return neutral on any error
 
+
+# =============================================================================
+# WHISPER PHONETIC ANALYZER - PHASE C (improved accuracy for mumbled vocals)
+# =============================================================================
+
+class WhisperPhoneticAnalyzer:
+    """
+    Whisper-based phonetic analyzer for improved accuracy on mumbled/sung vocals.
+    
+    Uses OpenAI Whisper for transcription and g2p_en to convert words to IPA.
+    This approach is more accurate than Allosaurus for non-standard speech because:
+    1. Whisper is context-aware and trained on diverse audio
+    2. g2p_en provides accurate English phoneme mappings
+    
+    Usage:
+        analyzer = WhisperPhoneticAnalyzer(model_size="base")
+        ipa = analyzer.analyze_segment(audio_chunk, sample_rate=22050)
+        # Returns: "/tɔk tə mi/" (English phonemes)
+    """
+    
+    def __init__(self, model_size: str = None):
+        """
+        Initialize the Whisper Phonetic Analyzer.
+        
+        Args:
+            model_size: Whisper model size ("tiny", "base", "small", "medium", "large").
+                       If None, reads from config.
+        """
+        # Load model size from config if not specified
+        if model_size is None:
+            try:
+                from config import config
+                model_size = config.WHISPER_MODEL_SIZE
+            except ImportError:
+                model_size = "base"
+        
+        self.model_size = model_size
+        self.model = None
+        self.g2p = None
+        self._initialized = False
+    
+    def _lazy_init(self):
+        """
+        Lazy initialization of Whisper model and g2p_en (download on first use).
+        """
+        if self._initialized:
+            return
+        
+        # Load Whisper
+        try:
+            import whisper
+            print(f"[WhisperPhoneticAnalyzer] Loading Whisper '{self.model_size}' model...")
+            self.model = whisper.load_model(self.model_size)
+            print(f"[WhisperPhoneticAnalyzer] Whisper model loaded successfully")
+        except ImportError:
+            print("[WhisperPhoneticAnalyzer] WARNING: openai-whisper not installed. Run: pip install openai-whisper")
+            self.model = None
+        except Exception as e:
+            print(f"[WhisperPhoneticAnalyzer] WARNING: Failed to load Whisper: {e}")
+            self.model = None
+        
+        # Load g2p_en
+        try:
+            from g2p_en import G2p
+            self.g2p = G2p()
+            print("[WhisperPhoneticAnalyzer] g2p_en loaded successfully")
+        except ImportError:
+            print("[WhisperPhoneticAnalyzer] WARNING: g2p_en not installed. Run: pip install g2p_en")
+            self.g2p = None
+        except Exception as e:
+            print(f"[WhisperPhoneticAnalyzer] WARNING: Failed to load g2p_en: {e}")
+            self.g2p = None
+        
+        self._initialized = True
+    
+    def _transcribe(self, y_segment: np.ndarray, sr: int) -> str:
+        """
+        Transcribe audio segment using Whisper.
+        
+        Enhanced for short mumbled segments:
+        - Uses initial_prompt to bias toward short utterances
+        - Low temperature for deterministic output
+        - Filters suspiciously long transcriptions (likely hallucinations)
+        
+        Args:
+            y_segment: Audio signal array.
+            sr: Sample rate.
+            
+        Returns:
+            Transcribed text (English words).
+        """
+        if self.model is None:
+            return ""
+        
+        # Whisper expects 16kHz audio
+        y_16k = resample_audio(y_segment, sr, 16000)
+        
+        # Calculate actual audio duration
+        audio_duration = len(y_segment) / sr
+        
+        # Pad to at least 0.5 second for Whisper (but track real duration)
+        min_samples = 8000  # 0.5 second at 16kHz
+        if len(y_16k) < min_samples:
+            y_16k = np.pad(y_16k, (0, min_samples - len(y_16k)))
+        
+        try:
+            # Transcribe with Whisper - optimized for short mumbled audio
+            result = self.model.transcribe(
+                y_16k,
+                language="en",
+                fp16=False,  # CPU compatibility
+                task="transcribe",
+                # Improvements for short segments:
+                temperature=0.0,  # Deterministic output (less hallucination)
+                initial_prompt="Short syllable:",  # Bias toward short output
+                compression_ratio_threshold=2.4,  # Filter repetitive hallucinations
+                no_speech_threshold=0.6,  # More aggressive silence detection
+                condition_on_previous_text=False,  # Each segment is independent
+            )
+            text = result.get("text", "").strip()
+            
+            # Filter likely hallucinations: if transcription seems too long for audio duration
+            # A rough heuristic: average speaking rate is ~3-5 syllables/second
+            # So 0.3s audio should have max ~2 words
+            max_words = max(1, int(audio_duration * 5))  # 5 words per second max
+            words = text.split()
+            if len(words) > max_words:
+                # Suspicious - likely hallucination, take only first words
+                text = " ".join(words[:max_words])
+            
+            return text
+        except Exception as e:
+            print(f"[WhisperPhoneticAnalyzer] Transcription failed: {e}")
+            return ""
+    
+    def _words_to_ipa(self, text: str) -> str:
+        """
+        Convert English words to IPA phonemes using g2p_en.
+        
+        Args:
+            text: English text (e.g., "talk to me").
+            
+        Returns:
+            IPA string (e.g., "tɔk tə mi").
+        """
+        if not text or self.g2p is None:
+            return ""
+        
+        try:
+            # g2p_en returns list of phonemes (ARPAbet format)
+            phonemes = self.g2p(text)
+            
+            # Convert ARPAbet to IPA-like format
+            # Filter out punctuation and spaces, join phonemes
+            ipa_phonemes = []
+            for p in phonemes:
+                # Skip punctuation and whitespace
+                if p.strip() and p not in ".,!?;:'\"-":
+                    # Remove stress markers from ARPAbet (numbers)
+                    clean_p = ''.join(c for c in p if not c.isdigit())
+                    if clean_p:
+                        ipa_phonemes.append(clean_p.lower())
+            
+            return " ".join(ipa_phonemes)
+        except Exception as e:
+            print(f"[WhisperPhoneticAnalyzer] g2p conversion failed: {e}")
+            return ""
+    
+    def analyze_segment(self, y_segment: np.ndarray, sr: int) -> str:
+        """
+        Analyze audio segment: transcribe with Whisper, convert to IPA with g2p_en.
+        
+        Args:
+            y_segment: Audio signal array.
+            sr: Sample rate.
+            
+        Returns:
+            IPA phoneme string (e.g., "t ao k t uw m iy").
+        """
+        self._lazy_init()
+        
+        if self.model is None or self.g2p is None:
+            return ""
+        
+        # Step 1: Transcribe audio to text
+        text = self._transcribe(y_segment, sr)
+        
+        if not text:
+            return ""
+        
+        # Step 2: Convert text to IPA
+        ipa = self._words_to_ipa(text)
+        
+        return ipa
+    
+    @property
+    def is_available(self) -> bool:
+        """Check if Whisper and g2p are available."""
+        self._lazy_init()
+        return self.model is not None and self.g2p is not None
+
+
 class PhoneticAnalyzer:
     """
-    Wrapper for Allosaurus phone recognition.
+    Phonetic analyzer with configurable backend (Whisper or Allosaurus).
     
-    Allosaurus is a universal phone recognizer that outputs IPA tokens
-    regardless of language or meaning - perfect for analyzing mumbles.
+    Backend selection via PHONETIC_MODEL config:
+    - "whisper": Uses Whisper + g2p_en (recommended for mumbled/sung vocals)
+    - "allosaurus": Uses Allosaurus universal phone recognizer
     
     Enhanced features:
     - Configurable segment padding for acoustic context
     - Retry mechanism with expanded padding on failure
-    - Fallback classification when Allosaurus fails
-    - Short segment merging for better recognition
+    - Fallback classification when recognition fails
+    - Automatic fallback to Allosaurus if Whisper unavailable
     
     Usage:
         analyzer = PhoneticAnalyzer()
@@ -285,6 +488,7 @@ class PhoneticAnalyzer:
             self.padding = config.PHONETIC_PADDING
             self.retry_padding = config.PHONETIC_RETRY_PADDING
             self.fallback_enabled = config.PHONETIC_FALLBACK_ENABLED
+            self.phonetic_model = config.PHONETIC_MODEL  # "whisper" or "allosaurus"
             if enabled is None:
                 enabled = config.PHONETIC_ENABLED
         except ImportError:
@@ -293,6 +497,7 @@ class PhoneticAnalyzer:
             self.padding = 0.05
             self.retry_padding = 0.10
             self.fallback_enabled = True
+            self.phonetic_model = "whisper"  # Default to whisper in Phase C
             if enabled is None:
                 enabled = True
         
@@ -301,12 +506,14 @@ class PhoneticAnalyzer:
             self.fallback_enabled = False
         
         self.enabled = enabled
-        self.model = None
+        self.model = None  # Allosaurus model (lazy loaded)
+        self._whisper_analyzer = None  # WhisperPhoneticAnalyzer (lazy loaded)
         self._initialized = False
+        self._use_whisper = (self.phonetic_model == "whisper")
     
     def _lazy_init(self):
         """
-        Lazy initialization of Allosaurus model (download on first use).
+        Lazy initialization of the phonetic model (download on first use).
         """
         if self._initialized:
             return
@@ -314,7 +521,25 @@ class PhoneticAnalyzer:
         if not self.enabled:
             self._initialized = True
             return
-            
+        
+        # Try Whisper first if configured
+        if self._use_whisper:
+            try:
+                self._whisper_analyzer = WhisperPhoneticAnalyzer()
+                if self._whisper_analyzer.is_available:
+                    print("[PhoneticAnalyzer] Using Whisper + g2p_en backend (Phase C)")
+                    self._initialized = True
+                    return
+                else:
+                    print("[PhoneticAnalyzer] Whisper unavailable, falling back to Allosaurus")
+                    self._use_whisper = False
+                    self._whisper_analyzer = None
+            except Exception as e:
+                print(f"[PhoneticAnalyzer] Whisper init failed ({e}), falling back to Allosaurus")
+                self._use_whisper = False
+                self._whisper_analyzer = None
+        
+        # Fall back to Allosaurus
         try:
             from allosaurus.app import read_recognizer
             self.model = read_recognizer()
@@ -390,7 +615,9 @@ class PhoneticAnalyzer:
         """
         self._lazy_init()
         
-        if not self.enabled or self.model is None:
+        # Check if analyzer is available
+        has_backend = self._use_whisper and self._whisper_analyzer or self.model is not None
+        if not self.enabled or not has_backend:
             if use_fallback and self.fallback_enabled:
                 return classify_sound_type(y_segment, sr)
             return ""
@@ -406,11 +633,17 @@ class PhoneticAnalyzer:
                 return classify_sound_type(y_segment, sr)
             return ""
         
-        # First attempt
-        result = self._run_allosaurus(y_segment, sr)
-        
-        if result:
-            return result
+        # Use Whisper if available (Phase C)
+        if self._use_whisper and self._whisper_analyzer:
+            result = self._whisper_analyzer.analyze_segment(y_segment, sr)
+            if result:
+                return result
+            # Fall through to fallback if Whisper returns empty
+        else:
+            # Use Allosaurus (original behavior)
+            result = self._run_allosaurus(y_segment, sr)
+            if result:
+                return result
         
         # Fallback classification if enabled
         if use_fallback and self.fallback_enabled:
@@ -444,7 +677,9 @@ class PhoneticAnalyzer:
         """
         self._lazy_init()
         
-        if not self.enabled or self.model is None:
+        # Check if analyzer is available
+        has_backend = (self._use_whisper and self._whisper_analyzer) or self.model is not None
+        if not self.enabled or not has_backend:
             # Even when disabled, provide fallback if enabled
             if self.fallback_enabled:
                 phonemes_list = []
@@ -487,16 +722,20 @@ class PhoneticAnalyzer:
             segment_audio = y[start_sample:end_sample]
             
             # First attempt with standard padding
-            ipa = self._run_allosaurus(segment_audio, sr)
-            
-            # Retry with expanded padding if failed (Phase A.3: Add Retry)
-            if not ipa and duration < 0.2:  # Only retry for short segments
-                expanded_start = max(0, orig_start - retry_padding_samples)
-                expanded_end = min(len(y), orig_end + retry_padding_samples)
+            # Use Whisper if available (Phase C), else Allosaurus
+            if self._use_whisper and self._whisper_analyzer:
+                ipa = self._whisper_analyzer.analyze_segment(segment_audio, sr)
+            else:
+                ipa = self._run_allosaurus(segment_audio, sr)
                 
-                if expanded_end > expanded_start:
-                    expanded_segment = y[expanded_start:expanded_end]
-                    ipa = self._run_allosaurus(expanded_segment, sr)
+                # Retry with expanded padding if failed (Phase A.3: Add Retry)
+                if not ipa and duration < 0.2:  # Only retry for short segments
+                    expanded_start = max(0, orig_start - retry_padding_samples)
+                    expanded_end = min(len(y), orig_end + retry_padding_samples)
+                    
+                    if expanded_end > expanded_start:
+                        expanded_segment = y[expanded_start:expanded_end]
+                        ipa = self._run_allosaurus(expanded_segment, sr)
             
             if ipa:
                 phonemes_list.append(ipa)

@@ -23,3 +23,6 @@ requests>=2.31.0         # HTTP client for Ollama API
 
 # Phonetic Recognition (Phase 2.1 - Sound-Alike Generation)
 allosaurus>=1.0.2        # Universal phone recognizer (IPA output)
+
+# Phase C: Whisper Integration (improved phonetic accuracy)
+openai-whisper>=20231117 # Whisper speech recognition for mumbled vocals

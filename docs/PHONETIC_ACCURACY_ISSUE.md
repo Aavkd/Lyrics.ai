@@ -69,30 +69,33 @@ This causes the LLM to generate lyrics that don't match the original vocal sound
 
 ---
 
-## Recommended Solution: Phase C
+## Recommended Solution: Phase C (IMPLEMENTED ✅)
 
-Replace Allosaurus with **Whisper + g2p** pipeline:
+Replaced Allosaurus with **Whisper + g2p** pipeline:
 
 ```
-Audio Segment → Whisper (transcribe) → "talk" → g2p_en → /tɔːk/
+Audio Segment → Whisper (transcribe) → "talk" → g2p_en → /tɔk/
 ```
+
+### Implementation Details
+- Added `WhisperPhoneticAnalyzer` class to `audio_engine.py`
+- `PHONETIC_MODEL` config: `whisper` (default) or `allosaurus`
+- `WHISPER_MODEL_SIZE` config: `tiny`, `base`, `small`, `medium`, `large`
+- Automatic fallback to Allosaurus when Whisper unavailable
 
 ### Advantages
 - Whisper handles noisy/mumbled audio better
 - Returns actual English words (context-aware)
 - g2p_en converts words to accurate English phonemes
 
-### Implementation Path
-
-1. Add `PHONETIC_MODEL` config option (`allosaurus` | `whisper`)
-2. Create `WhisperPhoneticAnalyzer` class
-3. Use OpenAI Whisper (`small` or `base` model)
-4. Convert transcribed words to IPA via g2p_en
-5. Fall back to Allosaurus if Whisper returns empty
+### Configuration
+```ini
+PHONETIC_MODEL=whisper      # Use Whisper + g2p_en (recommended)
+WHISPER_MODEL_SIZE=base     # Model size (base = ~140MB)
+```
 
 ### Dependencies
-- `openai-whisper` package (~1.5GB model download)
-- GPU recommended but CPU works
+- `openai-whisper>=20231117` (~140MB model download for `base`)
 
 ---
 
