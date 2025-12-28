@@ -30,6 +30,53 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# PHONETIC MAPPINGS
+# =============================================================================
+
+# Simplified ARPABET to IPA mapping for phonetic comparison
+# This maps CMU Dict style phonemes to approximate IPA equivalents
+ARPABET_TO_IPA = {
+    # Vowels
+    'AA': 'ɑ',  # odd
+    'AE': 'æ',  # at
+    'AH': 'ʌ',  # hut (can also be schwa)
+    'AO': 'ɔ',  # ought
+    'AW': 'aʊ', # cow
+    'AY': 'aɪ', # hide
+    'EH': 'ɛ',  # Ed
+    'ER': 'ɝ',  # hurt
+    'EY': 'eɪ', # ate
+    'IH': 'ɪ',  # it
+    'IY': 'i',  # eat
+    'OW': 'oʊ', # oat
+    'OY': 'ɔɪ', # toy
+    'UH': 'ʊ',  # hood
+    'UW': 'u',  # two
+    # Consonants
+    'B': 'b', 'CH': 'tʃ', 'D': 'd', 'DH': 'ð', 'F': 'f',
+    'G': 'g', 'HH': 'h', 'JH': 'dʒ', 'K': 'k', 'L': 'l',
+    'M': 'm', 'N': 'n', 'NG': 'ŋ', 'P': 'p', 'R': 'r',
+    'S': 's', 'SH': 'ʃ', 'T': 't', 'TH': 'θ', 'V': 'v',
+    'W': 'w', 'Y': 'j', 'Z': 'z', 'ZH': 'ʒ'
+}
+
+# Broad phonetic class mapping for fallback matching
+# Groups similar sounds together for more lenient comparison
+PHONETIC_CLASSES = {
+    # Vowels by openness
+    'open_vowel': {'ɑ', 'æ', 'ʌ', 'a'},
+    'mid_vowel': {'ɛ', 'ɝ', 'ɔ', 'e', 'o'},
+    'close_vowel': {'ɪ', 'i', 'ʊ', 'u'},
+    # Consonants by manner
+    'plosive': {'b', 'p', 'd', 't', 'g', 'k'},
+    'fricative': {'f', 'v', 's', 'z', 'ʃ', 'ʒ', 'θ', 'ð', 'h'},
+    'nasal': {'m', 'n', 'ŋ'},
+    'approximant': {'l', 'r', 'w', 'j'},
+    'affricate': {'tʃ', 'dʒ'},
+}
+
+
+# =============================================================================
 # DATA STRUCTURES
 # =============================================================================
 
@@ -39,7 +86,9 @@ class ValidationResult:
     
     Attributes:
         is_valid: True if syllable count matches exactly.
-        score: Groove score between 0.0 and 1.0 (stress matching).
+        score: Combined score (rhythm + phonetics) between 0.0 and 1.0.
+        groove_score: Rhythm/stress matching score (0.0 to 1.0).
+        phonetic_score: Phonetic similarity score (0.0 to 1.0).
         reason: Human-readable explanation of the result.
         syllable_count: Actual syllable count of the text.
         phonemes: List of phonemes generated from the text.
@@ -48,6 +97,8 @@ class ValidationResult:
     is_valid: bool
     score: float
     reason: str
+    groove_score: float = 0.0
+    phonetic_score: float = 0.0
     syllable_count: int = 0
     phonemes: list[str] = None
     stress_markers: list[int] = None
@@ -202,10 +253,94 @@ class LyricValidator:
         
         return points / max_points
     
+    def normalize_arpabet_to_ipa(self, phonemes: list[str]) -> str:
+        """
+        Convert ARPABET phonemes to simplified IPA string.
+        
+        Strips stress markers and converts to IPA for comparison
+        with Allosaurus output.
+        
+        Args:
+            phonemes: List of ARPABET phonemes (e.g., ['M', 'AA1', 'N']).
+            
+        Returns:
+            Space-separated IPA string (e.g., "m ɑ n").
+        """
+        ipa_parts = []
+        
+        for phoneme in phonemes:
+            # Strip stress marker (0, 1, 2) from end
+            base_phoneme = phoneme.rstrip('012')
+            
+            # Skip non-phoneme characters (punctuation, spaces)
+            if not base_phoneme or base_phoneme in [' ', "'", ',', '.']:
+                continue
+            
+            # Convert to IPA
+            ipa = ARPABET_TO_IPA.get(base_phoneme, base_phoneme.lower())
+            ipa_parts.append(ipa)
+        
+        return ' '.join(ipa_parts)
+    
+    def calculate_phonetic_match(
+        self, 
+        text_phonemes: list[str], 
+        audio_ipa: str
+    ) -> float:
+        """
+        Calculate phonetic similarity between text and audio phonemes.
+        
+        Uses Levenshtein-like comparison with phonetic class awareness.
+        
+        Args:
+            text_phonemes: ARPABET phonemes from g2p_en (e.g., ['M', 'AA1', 'N']).
+            audio_ipa: IPA string from Allosaurus (e.g., "m ɑ n").
+            
+        Returns:
+            Similarity score between 0.0 and 1.0.
+            Returns 0.0 if audio_ipa is empty (no phonetic data).
+        """
+        if not audio_ipa or not audio_ipa.strip():
+            return 0.0
+        
+        # Convert text phonemes to IPA
+        text_ipa = self.normalize_arpabet_to_ipa(text_phonemes)
+        
+        if not text_ipa:
+            return 0.0
+        
+        # Split into individual characters/sounds for comparison
+        text_sounds = text_ipa.replace(' ', '')
+        audio_sounds = audio_ipa.replace(' ', '')
+        
+        if not audio_sounds:
+            return 0.0
+        
+        # Calculate simple character overlap score
+        # More sophisticated: use Levenshtein or phonetic feature distance
+        matches = 0
+        total = max(len(text_sounds), len(audio_sounds))
+        
+        # Compare character by character (simple approach)
+        for i, char in enumerate(text_sounds):
+            if i < len(audio_sounds):
+                if char == audio_sounds[i]:
+                    matches += 1
+                else:
+                    # Check if same phonetic class (partial match)
+                    for class_name, class_chars in PHONETIC_CLASSES.items():
+                        if char in class_chars and audio_sounds[i] in class_chars:
+                            matches += 0.5
+                            break
+        
+        return min(1.0, matches / total) if total > 0 else 0.0
+    
     def validate_line(
         self, 
         text: str, 
-        target_segments: list
+        target_segments: list,
+        rhythm_weight: float = 0.6,
+        phonetic_weight: float = 0.4
     ) -> ValidationResult:
         """
         Validate a lyric line against target audio segments.
@@ -214,14 +349,18 @@ class LyricValidator:
         1. Count syllables in text using phonetic analysis
         2. Check if syllable count matches segment count (strict)
         3. If valid, calculate groove score from stress patterns
+        4. If phonetic data available, calculate phonetic match score
+        5. Combine scores with configurable weights
         
         Args:
             text: Lyric line to validate.
             target_segments: List of Segment objects from audio analysis.
-                             Each segment has is_stressed: bool attribute.
+                             Each segment has is_stressed: bool and audio_phonemes: str.
+            rhythm_weight: Weight for groove score (default: 0.6).
+            phonetic_weight: Weight for phonetic score (default: 0.4).
             
         Returns:
-            ValidationResult with validation details and score.
+            ValidationResult with validation details and combined score.
         """
         # Step 1: Phonetic analysis
         syllable_count, phonemes, stress_markers = self.count_syllables(text)
@@ -238,16 +377,33 @@ class LyricValidator:
                 stress_markers=stress_markers
             )
         
-        # Step 3: Extract audio stress pattern
+        # Step 3: Extract audio stress pattern and calculate groove score
         audio_stress = [seg.is_stressed for seg in target_segments]
-        
-        # Step 4: Calculate groove score
         groove_score = self.calculate_groove_score(stress_markers, audio_stress)
+        
+        # Step 4: Calculate phonetic match (if audio_phonemes available)
+        audio_phonemes_list = [
+            getattr(seg, 'audio_phonemes', '') for seg in target_segments
+        ]
+        combined_audio_phonemes = ' '.join(filter(None, audio_phonemes_list))
+        
+        if combined_audio_phonemes.strip():
+            phonetic_score = self.calculate_phonetic_match(phonemes, combined_audio_phonemes)
+            # Step 5: Combine scores
+            total_score = (groove_score * rhythm_weight) + (phonetic_score * phonetic_weight)
+            reason = f"Valid! Groove: {groove_score:.2f}, Phonetic: {phonetic_score:.2f}, Combined: {total_score:.2f}"
+        else:
+            # No phonetic data, use groove score only
+            phonetic_score = 0.0
+            total_score = groove_score
+            reason = f"Valid! Groove score: {groove_score:.2f} (no phonetic data)"
         
         return ValidationResult(
             is_valid=True,
-            score=groove_score,
-            reason=f"Valid! Groove score: {groove_score:.2f}",
+            score=total_score,
+            reason=reason,
+            groove_score=groove_score,
+            phonetic_score=phonetic_score,
             syllable_count=syllable_count,
             phonemes=phonemes,
             stress_markers=stress_markers

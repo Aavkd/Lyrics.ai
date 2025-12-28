@@ -10,6 +10,9 @@ Write a line with exactly **{{syllable_count}} syllables**.
 ## Melodic Guidance
 {{pitch_guidance}}
 
+## Phonetic Hints (Sound-Alike)
+{{phonetic_hints}}
+
 ## Constraints
 {{sustain_constraints}}
 

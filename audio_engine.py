@@ -34,6 +34,7 @@ class Segment:
     is_stressed: bool = False
     is_sustained: bool = False
     pitch_contour: str = "mid"  # "low", "mid", "high", "rising", "falling"
+    audio_phonemes: str = ""  # Raw IPA phonemes from Allosaurus (e.g., "b a d a")
 
 
 @dataclass
@@ -68,7 +69,8 @@ class PivotJSON:
                             "duration": round(seg.duration, 3),
                             "is_stressed": seg.is_stressed,
                             "is_sustained": seg.is_sustained,
-                            "pitch_contour": seg.pitch_contour
+                            "pitch_contour": seg.pitch_contour,
+                            "audio_phonemes": seg.audio_phonemes
                         }
                         for seg in block.segments
                     ]
@@ -180,6 +182,189 @@ class DemucsProcessor:
 
 
 # =============================================================================
+# AUDIO UTILITIES
+# =============================================================================
+
+def resample_audio(y: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
+    """
+    Resample audio to target sample rate.
+    
+    Allosaurus requires 16kHz mono audio for phone recognition.
+    
+    Args:
+        y: Audio signal array.
+        orig_sr: Original sample rate.
+        target_sr: Target sample rate (default: 16000 Hz for Allosaurus).
+        
+    Returns:
+        Resampled audio signal.
+    """
+    if orig_sr == target_sr:
+        return y
+    return librosa.resample(y, orig_sr=orig_sr, target_sr=target_sr)
+
+
+# =============================================================================
+# PHONETIC ANALYZER - IPA RECOGNITION
+# =============================================================================
+
+class PhoneticAnalyzer:
+    """
+    Wrapper for Allosaurus phone recognition.
+    
+    Allosaurus is a universal phone recognizer that outputs IPA tokens
+    regardless of language or meaning - perfect for analyzing mumbles.
+    
+    Usage:
+        analyzer = PhoneticAnalyzer()
+        ipa = analyzer.analyze_segment(audio_chunk, sample_rate=22050)
+        # Returns: "b a d a" (IPA tokens)
+    """
+    
+    def __init__(self, enabled: bool = True):
+        """
+        Initialize the Phonetic Analyzer.
+        
+        Args:
+            enabled: If False, skip phonetic analysis (for faster processing).
+        """
+        self.enabled = enabled
+        self.model = None
+        self._initialized = False
+    
+    def _lazy_init(self):
+        """
+        Lazy initialization of Allosaurus model (download on first use).
+        """
+        if self._initialized:
+            return
+        
+        if not self.enabled:
+            self._initialized = True
+            return
+            
+        try:
+            from allosaurus.app import read_recognizer
+            self.model = read_recognizer()
+            print("[PhoneticAnalyzer] Allosaurus model loaded successfully")
+        except ImportError:
+            print("[PhoneticAnalyzer] WARNING: allosaurus not installed. Run: pip install allosaurus")
+            self.enabled = False
+        except Exception as e:
+            print(f"[PhoneticAnalyzer] WARNING: Failed to load Allosaurus: {e}")
+            self.enabled = False
+        
+        self._initialized = True
+    
+    def analyze_segment(
+        self, 
+        y_segment: np.ndarray, 
+        sr: int,
+        min_duration: float = 0.05
+    ) -> str:
+        """
+        Extract IPA phonemes from an audio segment.
+        
+        Args:
+            y_segment: Audio signal array for the segment.
+            sr: Sample rate of the audio.
+            min_duration: Minimum duration in seconds to analyze.
+            
+        Returns:
+            Space-separated IPA phoneme string (e.g., "b a d a").
+            Returns empty string if analysis fails or segment too short.
+        """
+        self._lazy_init()
+        
+        if not self.enabled or self.model is None:
+            return ""
+        
+        # Check minimum duration
+        duration = len(y_segment) / sr
+        if duration < min_duration:
+            return ""
+        
+        # Resample to 16kHz for Allosaurus
+        y_16k = resample_audio(y_segment, sr, 16000)
+        
+        # Allosaurus requires file input, so save to temp file
+        # NOTE: On Windows, use delete=False because the file must be closed
+        # before Allosaurus can read it (Windows file locking behavior)
+        import tempfile
+        import soundfile as sf
+        
+        temp_path = None
+        try:
+            # Create temp file with delete=False for Windows compatibility
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                temp_path = f.name
+                sf.write(temp_path, y_16k, 16000)
+            
+            # File is now closed, Allosaurus can read it
+            result = self.model.recognize(temp_path)
+            
+            # Result is space-separated IPA tokens
+            return result.strip() if result else ""
+            
+        except Exception as e:
+            # Non-critical: just return empty string on failure
+            print(f"[PhoneticAnalyzer] Segment analysis failed: {e}")
+            return ""
+        finally:
+            # Clean up temp file
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass  # Ignore cleanup errors
+    
+    def analyze_segments(
+        self,
+        y: np.ndarray,
+        sr: int,
+        onset_times: list[float],
+        durations: list[float]
+    ) -> list[str]:
+        """
+        Analyze multiple segments and return IPA phonemes for each.
+        
+        Args:
+            y: Full audio signal.
+            sr: Sample rate.
+            onset_times: List of segment start times in seconds.
+            durations: List of segment durations in seconds.
+            
+        Returns:
+            List of IPA strings, one per segment.
+        """
+        self._lazy_init()
+        
+        if not self.enabled or self.model is None:
+            return [""] * len(onset_times)
+        
+        phonemes_list = []
+        
+        for onset_time, duration in zip(onset_times, durations):
+            # Extract segment audio
+            start_sample = int(onset_time * sr)
+            end_sample = int((onset_time + duration) * sr)
+            
+            # Clamp to valid range
+            start_sample = max(0, start_sample)
+            end_sample = min(len(y), end_sample)
+            
+            if end_sample <= start_sample:
+                phonemes_list.append("")
+                continue
+            
+            segment_audio = y[start_sample:end_sample]
+            ipa = self.analyze_segment(segment_audio, sr)
+            phonemes_list.append(ipa)
+        
+        return phonemes_list
+
+
+# =============================================================================
 # LIBROSA ANALYZER - RHYTHM DETECTION
 # =============================================================================
 
@@ -262,6 +447,7 @@ class PivotFormatter:
     Enhanced with Step 1 of Tech Roadmap:
     - Stress detection via RMS amplitude analysis
     - Sustain detection via duration thresholds
+    - Phonetic analysis via Allosaurus (IPA extraction)
     """
     
     def __init__(
@@ -269,7 +455,8 @@ class PivotFormatter:
         default_segment_duration: float = 0.2,
         stress_threshold: float = 1.2,
         stress_window_size: int = 5,
-        sustain_threshold: float = 0.4
+        sustain_threshold: float = 0.4,
+        phonetic_analyzer: PhoneticAnalyzer = None
     ):
         """
         Initialize the formatter with configurable thresholds.
@@ -283,11 +470,14 @@ class PivotFormatter:
                                 for local average calculation.
             sustain_threshold: Duration in seconds above which a segment
                                is considered sustained (long vowel).
+            phonetic_analyzer: PhoneticAnalyzer instance for IPA extraction.
+                               If None, phonetic analysis will be skipped.
         """
         self.default_segment_duration = default_segment_duration
         self.stress_threshold = stress_threshold
         self.stress_window_size = stress_window_size
         self.sustain_threshold = sustain_threshold
+        self.phonetic_analyzer = phonetic_analyzer
     
     def _calculate_segment_rms(
         self, 
@@ -507,6 +697,12 @@ class PivotFormatter:
         sustained = self._detect_sustain(durations)
         pitch_contours = self._detect_pitch(y, sr, onset_times, durations)
         
+        # Detect phonemes via Allosaurus (if analyzer is available)
+        if self.phonetic_analyzer is not None and y is not None:
+            audio_phonemes = self.phonetic_analyzer.analyze_segments(y, sr, onset_times, durations)
+        else:
+            audio_phonemes = [""] * len(onset_times)
+        
         # Build segments with all detected features
         segments = []
         for i, onset_time in enumerate(onset_times):
@@ -515,7 +711,8 @@ class PivotFormatter:
                 duration=durations[i],
                 is_stressed=stressed[i] if i < len(stressed) else False,
                 is_sustained=sustained[i] if i < len(sustained) else False,
-                pitch_contour=pitch_contours[i] if i < len(pitch_contours) else "mid"
+                pitch_contour=pitch_contours[i] if i < len(pitch_contours) else "mid",
+                audio_phonemes=audio_phonemes[i] if i < len(audio_phonemes) else ""
             ))
         
         # Create single block containing all segments (MVP approach)
@@ -547,17 +744,24 @@ class AudioEngine:
         json_output = result.to_dict()
     """
     
-    def __init__(self, mock_mode: bool = False):
+    def __init__(self, mock_mode: bool = False, phonetic_enabled: bool = True):
         """
         Initialize the audio engine.
         
         Args:
             mock_mode: If True, skip Demucs processing (development mode).
+            phonetic_enabled: If True, enable Allosaurus phonetic analysis.
+                              Set to False for faster processing without IPA.
         """
         self.demucs = DemucsProcessor(mock_mode=mock_mode)
         self.analyzer = LibrosaAnalyzer()
-        self.formatter = PivotFormatter()
+        
+        # Initialize phonetic analyzer if enabled
+        self.phonetic_analyzer = PhoneticAnalyzer(enabled=phonetic_enabled)
+        self.formatter = PivotFormatter(phonetic_analyzer=self.phonetic_analyzer)
+        
         self.mock_mode = mock_mode
+        self.phonetic_enabled = phonetic_enabled
     
     def process(self, audio_path: str, output_dir: Optional[str] = None) -> PivotJSON:
         """

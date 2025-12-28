@@ -17,6 +17,11 @@ Generate exactly 5 different line variations. Each line MUST match the syllable 
 2. DA = stressed (strong beat), da = unstressed (weak beat)
 3. Put strong words (nouns, verbs) on DA positions
 4. For sustained syllables, use open vowels: "fly", "go", "way", "day", "sky", "free"
+5. **PHONETIC MATCHING**: When "Sounds Like" hints are provided:
+   - Prioritize words that share **vowels** (assonance) with the phonetic sounds
+   - Match **consonants** (consonance) when possible
+   - Example: If sounds like /m ʌ n/, try: "money", "monday", "month"
+   - Example: If sounds like /b a/, try: "bad", "back", "battle"
 
 ## Examples
 

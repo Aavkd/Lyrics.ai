@@ -20,3 +20,6 @@ g2p_en>=2.1.0            # Phonetic syllable counting
 
 # Step 3: Generation Engine (Ollama Integration)
 requests>=2.31.0         # HTTP client for Ollama API
+
+# Phonetic Recognition (Phase 2.1 - Sound-Alike Generation)
+allosaurus>=1.0.2        # Universal phone recognizer (IPA output)

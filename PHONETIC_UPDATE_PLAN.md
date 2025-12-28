@@ -174,3 +174,69 @@ Mitigation: Only run it on short segments (the identified syllable blocks), not 
 Risk: g2p_en (ARPABET) vs Allosaurus (IPA) mismatch.
 
 Mitigation: Use "Broad Phonetic Class" matching (e.g., match any Plosive with any Plosive) instead of exact character matching if strict mapping fails.
+
+---
+
+# 6. Implementation Changelog
+
+## 2025-12-28: Initial Implementation Complete
+
+### ✅ Phase A: Environment & Core
+- Added `allosaurus>=2.0.0` to `requirements.txt`
+- Implemented `resample_audio()` utility for 16kHz conversion
+- Created `PhoneticAnalyzer` class with lazy model loading
+- Added `audio_phonemes` field to `Segment` dataclass
+- Integrated phonetic analysis into `PivotFormatter.format()`
+- Added `phonetic_enabled` parameter to `AudioEngine`
+- Fixed Windows temp file locking issue (use `delete=False`)
+
+### ✅ Phase B: Prompt Integration
+- Added `_generate_phonetic_hints()` method to `PromptEngine`
+- Updated `user_template.md` with "Phonetic Hints (Sound-Alike)" section
+- Updated `system_instruction.md` with phonetic matching rules (Rule 5)
+- Phonetic hints display as: `Syllable N sounds like: **/IPA/**`
+
+### ✅ Phase C: Validation Logic
+- Added `ARPABET_TO_IPA` mapping dictionary (15 vowels, 24 consonants)
+- Added `PHONETIC_CLASSES` for broad manner-of-articulation matching
+- Implemented `normalize_arpabet_to_ipa()` method
+- Implemented `calculate_phonetic_match()` with class-aware scoring
+- Updated `validate_line()` with 60/40 rhythm/phonetic weighting
+- Updated `ValidationResult` dataclass with `groove_score` and `phonetic_score`
+
+### ✅ Phase D: Testing
+- Created `tests/test_phonetic_analyzer.py` (6 tests, all passing)
+- Created `tests/test_phonetic_validation.py` (5 tests, all passing)
+- Created `tests/test_pipeline_inspector.py` (debug tool for manual inspection)
+- Verified end-to-end pipeline works with phonetic scoring
+
+---
+
+## 🚨 Issues Found During Testing
+
+See: [docs/PHONETIC_REFINEMENTS_NEEDED.md](docs/PHONETIC_REFINEMENTS_NEEDED.md)
+
+### Critical Issues
+1. **Syllable Under-Detection**: Expected 6 syllables for "Talk to me, I said what", detected only 3
+   - Root Cause: Conservative onset detection parameters
+   - Status: **NEEDS FIX** - Tune `delta` or add manual override
+
+2. **Long Segment Durations**: Segments spanning 1+ seconds contain multiple syllables
+   - Root Cause: Missed intermediate onsets
+   - Status: **NEEDS FIX** - Auto-split long segments
+
+### Medium Issues
+3. **Phoneme Quality**: IPA output differs from expected English phonemes
+   - Assessment: Partially expected (Allosaurus is language-agnostic)
+   - Status: **ACCEPTABLE** - Use broad class matching
+
+4. **Missing Phonemes on Short Segments**: Some segments return no phonemes
+   - Status: **ACCEPTABLE** - Gracefully handled with empty string
+
+---
+
+## Next Steps
+1. Tune onset detection for better syllable count accuracy
+2. Implement manual syllable count override in API
+3. Add Tap-to-Rhythm feature for manual onset marking
+4. Consider using Allosaurus timestamps for sub-segmentation

@@ -178,6 +178,43 @@ class PromptEngine:
         
         return "\n".join(guidance_lines)
     
+    def _generate_phonetic_hints(self, segments: list) -> str:
+        """
+        Generate phonetic hints from audio_phonemes for sound-alike matching.
+        
+        Args:
+            segments: List of Segment objects with audio_phonemes field.
+            
+        Returns:
+            Formatted string with phonetic hints for the LLM.
+            
+        Examples:
+            - "Syllable 1 sounds like: /b a/ → try words with 'ba' sound (bad, back, bat)"
+            - "Syllable 3 sounds like: /m ʌ n/ → try 'man', 'money', 'month'"
+        """
+        if not segments:
+            return "No phonetic data available."
+        
+        # Check if segments have audio_phonemes attribute
+        if not hasattr(segments[0], 'audio_phonemes'):
+            return "Phonetic analysis not available for this audio."
+        
+        hints = []
+        
+        for i, seg in enumerate(segments, 1):
+            phonemes = getattr(seg, 'audio_phonemes', '')
+            
+            if phonemes and phonemes.strip():
+                # Format the IPA phonemes for display
+                hints.append(
+                    f"- Syllable {i} sounds like: **/{phonemes}/**"
+                )
+        
+        if not hints:
+            return "No clear phonetic patterns detected. Generate based on rhythm only."
+        
+        return "\n".join(hints)
+    
     def _process_block(self, block) -> dict:
         """
         Convert a Block's data into LLM-friendly formats.
@@ -201,12 +238,14 @@ class PromptEngine:
         stress_pattern = self._convert_stress_to_pattern(stressed_flags)
         sustain_constraints = self._generate_sustain_constraints(segments)
         pitch_guidance = self._generate_pitch_guidance(segments)
+        phonetic_hints = self._generate_phonetic_hints(segments)
         
         return {
             "syllable_count": block.syllable_target,
             "stress_pattern": stress_pattern,
             "sustain_constraints": sustain_constraints,
             "pitch_guidance": pitch_guidance,
+            "phonetic_hints": phonetic_hints,
             "candidate_count": self.candidate_count
         }
     
