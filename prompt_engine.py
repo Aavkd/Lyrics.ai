@@ -129,18 +129,68 @@ class PromptEngine:
         
         return "\n".join(constraints)
     
+    def _generate_pitch_guidance(self, segments: list) -> str:
+        """
+        Generate melodic guidance from pitch contours.
+        
+        Args:
+            segments: List of Segment objects with pitch_contour field.
+            
+        Returns:
+            Natural language guidance for the LLM based on pitch patterns.
+            
+        Examples:
+            - "Segment 2 is **high-pitch**. Consider open vowels (O, A, E)."
+            - "Segment 4 has a **rising** melody. Build energy into the word."
+        """
+        if not segments:
+            return "No pitch data available."
+        
+        # Check if segments have pitch_contour attribute
+        if not hasattr(segments[0], 'pitch_contour'):
+            return "Pitch analysis not available for this audio."
+        
+        guidance_lines = []
+        
+        for i, seg in enumerate(segments, 1):
+            pitch = getattr(seg, 'pitch_contour', 'mid')
+            
+            if pitch == "high":
+                guidance_lines.append(
+                    f"- Syllable {i} is **high-pitch**. Use bright, open vowels (EE, AY, OH)."
+                )
+            elif pitch == "low":
+                guidance_lines.append(
+                    f"- Syllable {i} is **low-pitch**. Use deep vowels (OO, AW, O)."
+                )
+            elif pitch == "rising":
+                guidance_lines.append(
+                    f"- Syllable {i} **rises** in pitch. Build energy into the word."
+                )
+            elif pitch == "falling":
+                guidance_lines.append(
+                    f"- Syllable {i} **falls** in pitch. Use it for emphasis or resolution."
+                )
+            # "mid" is neutral, no special guidance needed
+        
+        if not guidance_lines:
+            return "All syllables are **mid-pitch**. Standard syllable placement."
+        
+        return "\n".join(guidance_lines)
+    
     def _process_block(self, block) -> dict:
         """
         Convert a Block's data into LLM-friendly formats.
         
         Args:
-            block: Block object containing segments with stress/sustain info.
+            block: Block object containing segments with stress/sustain/pitch info.
             
         Returns:
             Dictionary with:
                 - syllable_count: int
                 - stress_pattern: str (e.g., "DA-da-DA-da-DA")
                 - sustain_constraints: str (e.g., "Syllable 5 is long...")
+                - pitch_guidance: str (melodic guidance for each segment)
         """
         segments = block.segments
         
@@ -150,11 +200,13 @@ class PromptEngine:
         # Generate pattern and constraints
         stress_pattern = self._convert_stress_to_pattern(stressed_flags)
         sustain_constraints = self._generate_sustain_constraints(segments)
+        pitch_guidance = self._generate_pitch_guidance(segments)
         
         return {
             "syllable_count": block.syllable_target,
             "stress_pattern": stress_pattern,
             "sustain_constraints": sustain_constraints,
+            "pitch_guidance": pitch_guidance,
             "candidate_count": self.candidate_count
         }
     

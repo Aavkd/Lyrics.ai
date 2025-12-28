@@ -7,6 +7,9 @@ Write a line with exactly **{{syllable_count}} syllables**.
 {{stress_pattern}}
 ```
 
+## Melodic Guidance
+{{pitch_guidance}}
+
 ## Constraints
 {{sustain_constraints}}
 

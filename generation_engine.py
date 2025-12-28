@@ -3,14 +3,20 @@ Flow-to-Lyrics: Generation Engine
 ==================================
 Step 3 of the Tech Roadmap - The "Brain"
 
-This module handles LLM interactions with a local Ollama instance running
-ministral-3:8b to generate lyric candidates from structured prompts.
+This module handles LLM interactions with a local Ollama instance to generate
+lyric candidates from structured prompts. Model is configurable via .env file.
 
 Key Features:
 - HTTP-based communication with Ollama (no custom library dependencies)
-- Robust JSON parsing for "chatty" 3B model output
+- Robust JSON parsing for "chatty" model output
 - Mock mode for testing without Ollama
-- Configurable model and temperature settings
+- Configurable model and temperature settings via .env file
+
+Configuration (in .env file):
+    OLLAMA_MODEL=mistral:7b     # Switch to any Ollama model
+    OLLAMA_URL=http://localhost:11434
+    OLLAMA_TEMPERATURE=0.7
+    OLLAMA_TIMEOUT=60
 """
 
 from __future__ import annotations
@@ -20,6 +26,8 @@ import re
 from typing import Optional
 
 import requests
+
+from config import config
 
 
 # =============================================================================
@@ -31,11 +39,10 @@ class GenerationEngine:
     LLM interface for generating lyric candidates via Ollama.
     
     Communicates with a local Ollama instance using standard HTTP requests.
-    Designed specifically for small local models (like ministral-3:8b) that
-    may produce "chatty" output with markdown formatting.
+    Model configuration is loaded from .env file via the config module.
     
     Usage:
-        engine = GenerationEngine()  # Connects to localhost:11434
+        engine = GenerationEngine()  # Uses config defaults
         candidates = engine.generate_candidates(system_prompt, user_prompt)
         # Returns: ["line 1", "line 2", "line 3", ...]
     
@@ -43,10 +50,16 @@ class GenerationEngine:
         engine = GenerationEngine(mock_mode=True)
         # Returns predefined candidates without making API calls
     
+    Configuration via .env:
+        OLLAMA_MODEL=mistral:7b
+        OLLAMA_URL=http://localhost:11434
+        OLLAMA_TEMPERATURE=0.7
+        OLLAMA_TIMEOUT=60
+    
     Attributes:
-        model: Name of the Ollama model to use (default: ministral-3:8b).
-        base_url: Ollama API base URL (default: http://localhost:11434).
-        temperature: Generation temperature (default: 0.7).
+        model: Name of the Ollama model (from config or override).
+        base_url: Ollama API base URL (from config or override).
+        temperature: Generation temperature (from config or override).
         mock_mode: If True, return mock data without API calls.
     """
     
@@ -61,31 +74,33 @@ class GenerationEngine:
     
     def __init__(
         self,
-        model: str = "ministral-3:8b",
-        base_url: str = "http://localhost:11434",
-        temperature: float = 0.7,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        temperature: Optional[float] = None,
         candidate_count: int = 5,
         mock_mode: bool = False,
-        timeout: int = 60
+        timeout: Optional[int] = None
     ):
         """
         Initialize the Generation Engine.
         
         Args:
-            model: Ollama model name (default: ministral-3:8b).
-            base_url: Ollama API base URL (default: http://localhost:11434).
+            model: Ollama model name. Defaults to config.OLLAMA_MODEL.
+            base_url: Ollama API base URL. Defaults to config.OLLAMA_URL.
             temperature: LLM sampling temperature (0.0-1.0). Higher = more creative.
-                        Default 0.7 balances creativity and adherence.
+                        Defaults to config.OLLAMA_TEMPERATURE.
             candidate_count: Number of candidates to request (default: 5).
             mock_mode: If True, skip API calls and return mock data.
-            timeout: Request timeout in seconds (default: 60).
+            timeout: Request timeout in seconds. Defaults to config.OLLAMA_TIMEOUT.
         """
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.temperature = temperature
+        # Use config defaults if not explicitly provided
+        self.model = model if model is not None else config.OLLAMA_MODEL
+        self.base_url = (base_url if base_url is not None else config.OLLAMA_URL).rstrip("/")
+        self.temperature = temperature if temperature is not None else config.OLLAMA_TEMPERATURE
+        self.timeout = timeout if timeout is not None else config.OLLAMA_TIMEOUT
+        
         self.candidate_count = candidate_count
         self.mock_mode = mock_mode
-        self.timeout = timeout
         
         # API endpoint for chat completions
         self.chat_endpoint = f"{self.base_url}/api/chat"
@@ -162,7 +177,7 @@ class GenerationEngine:
         """
         Robustly extract and parse JSON from LLM response.
         
-        Small models (like ministral-3:8b) often wrap their JSON output in:
+        Small local models often wrap their JSON output in:
         - Markdown code blocks (```json ... ```)
         - Conversational text ("Here is the result: ...")
         - Extra whitespace or newlines

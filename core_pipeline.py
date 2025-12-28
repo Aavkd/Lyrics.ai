@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from audio_engine import AudioEngine, Block, PivotJSON, Segment
+from config import config
 from generation_engine import GenerationEngine
 from prompt_engine import PromptEngine
 from validator import LyricValidator, ValidationResult
@@ -31,21 +32,27 @@ from validator import LyricValidator, ValidationResult
 # =============================================================================
 
 @dataclass
-class PipelineResult:
-    """Result of the full pipeline execution.
+class GenerationResult:
+    """Full result with all candidates exposed (for Co-Pilot workflow).
     
     Attributes:
-        best_line: The winning lyric line (or None if no valid match).
-        score: Groove score of the best line (0.0 to 1.0).
-        all_candidates: List of all generated candidates.
-        all_validations: List of ValidationResult for each candidate.
-        pivot_json: The PivotJSON from audio analysis.
+        candidates: All 5 generated lyric options.
+        validations: ValidationResult for each candidate.
+        best_line: Auto-selected winner (highest groove score) or None.
+        best_score: Groove score of the best line (0.0 to 1.0).
+        metadata: Audio analysis summary (tempo, duration, pattern, syllables).
+        pivot_json: Full PivotJSON from audio analysis.
     """
+    candidates: list[str]
+    validations: list[ValidationResult]
     best_line: Optional[str]
-    score: float
-    all_candidates: list[str]
-    all_validations: list[ValidationResult]
+    best_score: float
+    metadata: dict  # {"tempo": float, "duration": float, "syllable_target": int, "stress_pattern": str}
     pivot_json: Optional[PivotJSON]
+
+
+# Alias for backward compatibility
+PipelineResult = GenerationResult
 
 
 # =============================================================================
@@ -70,8 +77,8 @@ class CorePipeline:
     def __init__(
         self,
         mock_mode: bool = False,
-        ollama_model: str = "ministral-3:8b",
-        ollama_url: str = "http://localhost:11434",
+        ollama_model: Optional[str] = None,
+        ollama_url: Optional[str] = None,
         templates_dir: str = "prompts"
     ):
         """
@@ -80,16 +87,20 @@ class CorePipeline:
         Args:
             mock_mode: If True, use mock mode for AudioEngine and GenerationEngine.
                        Useful for testing without real audio/LLM processing.
-            ollama_model: Model name for Ollama LLM.
-            ollama_url: Base URL for Ollama API.
+            ollama_model: Model name for Ollama LLM. Defaults to config.OLLAMA_MODEL.
+            ollama_url: Base URL for Ollama API. Defaults to config.OLLAMA_URL.
             templates_dir: Directory containing prompt templates.
         """
+        # Use config defaults if not explicitly provided
+        model = ollama_model if ollama_model is not None else config.OLLAMA_MODEL
+        url = ollama_url if ollama_url is not None else config.OLLAMA_URL
+        
         # Initialize all engines
         self.audio_engine = AudioEngine(mock_mode=mock_mode)
         self.prompt_engine = PromptEngine(template_dir=templates_dir)
         self.generation_engine = GenerationEngine(
-            model=ollama_model,
-            base_url=ollama_url,
+            model=model,
+            base_url=url,
             mock_mode=mock_mode
         )
         self.validator = LyricValidator()
@@ -242,40 +253,126 @@ class CorePipeline:
     
     def run_full_pipeline(
         self, 
-        audio_path: str
-    ) -> PipelineResult:
+        audio_path: str,
+        block_index: int = 0
+    ) -> GenerationResult:
         """
-        Run the pipeline and return detailed results.
+        Run the pipeline and return detailed results with all candidates.
+        
+        This is the preferred method for the Co-Pilot workflow as it exposes
+        all 5 LLM candidates for user selection.
         
         Args:
             audio_path: Path to the input audio file.
+            block_index: Which block to process (default: 0).
             
         Returns:
-            PipelineResult with all pipeline data for analysis.
+            GenerationResult with all candidates, validations, and metadata.
         """
-        # Run standard pipeline
-        best_line, score = self.run_pipeline(audio_path)
+        print("\n" + "=" * 70)
+        print("  🎵 FLOW-TO-LYRICS: FULL PIPELINE (Co-Pilot Mode)")
+        print("=" * 70)
         
-        # For detailed results, we need to re-run some steps
-        # (In production, we'd cache these)
+        # Initialize result variables
+        candidates = []
+        validations = []
+        best_line = None
+        best_score = 0.0
+        pivot_json = None
+        metadata = {}
+        
         try:
+            # STEP 1: Audio Analysis
+            print("\n📊 STEP 1: Audio Analysis")
+            print("-" * 50)
+            
+            if not os.path.exists(audio_path):
+                print(f"  ❌ Audio file not found: {audio_path}")
+                return GenerationResult(
+                    candidates=[], validations=[], best_line=None, 
+                    best_score=0.0, metadata={}, pivot_json=None
+                )
+            
             pivot_json = self.audio_engine.process(audio_path)
-            system_prompt, user_prompt = self.prompt_engine.construct_prompt(pivot_json)
-            candidates = self.generation_engine.generate_candidates(system_prompt, user_prompt)
-            validations = self.validator.validate_candidates(
-                candidates, 
-                pivot_json.blocks[0].segments
+            block = pivot_json.blocks[block_index]
+            
+            # Build stress pattern string (DA-da-DA pattern)
+            stress_pattern = "".join(
+                "DA-" if seg.is_stressed else "da-" 
+                for seg in block.segments
+            ).rstrip("-")
+            
+            # Build pitch pattern string
+            pitch_pattern = "-".join(
+                seg.pitch_contour for seg in block.segments
             )
-        except Exception:
-            pivot_json = None
-            candidates = []
-            validations = []
+            
+            metadata = {
+                "tempo": pivot_json.tempo,
+                "duration": pivot_json.duration,
+                "syllable_target": block.syllable_target,
+                "stress_pattern": stress_pattern,
+                "pitch_pattern": pitch_pattern
+            }
+            
+            print(f"  ✓ Tempo: {pivot_json.tempo:.1f} BPM")
+            print(f"  ✓ Duration: {pivot_json.duration:.2f}s")
+            print(f"  ✓ Syllables: {block.syllable_target}")
+            print(f"  ✓ Stress: {stress_pattern}")
+            print(f"  ✓ Pitch: {pitch_pattern}")
+            
+            # STEP 2: Prompt Construction
+            print("\n📝 STEP 2: Prompt Construction")
+            print("-" * 50)
+            
+            system_prompt, user_prompt = self.prompt_engine.construct_prompt(
+                pivot_json, block_index=block_index
+            )
+            print(f"  ✓ System prompt: {len(system_prompt)} chars")
+            print(f"  ✓ User prompt: {len(user_prompt)} chars")
+            
+            # STEP 3: LLM Generation
+            print("\n🧠 STEP 3: LLM Generation")
+            print("-" * 50)
+            
+            candidates = self.generation_engine.generate_candidates(system_prompt, user_prompt)
+            print(f"  ✓ Generated {len(candidates)} candidates")
+            
+            # STEP 4: Validation
+            print("\n⚖️ STEP 4: Validation")
+            print("-" * 50)
+            
+            validations = self.validator.validate_candidates(candidates, block.segments)
+            
+            # Find best candidate
+            for i, (candidate, result) in enumerate(zip(candidates, validations), 1):
+                status = "✓" if result.is_valid else "✗"
+                print(f"  {status} {i}. \"{candidate}\" (syllables: {result.syllable_count}, score: {result.score:.2f})")
+                
+                if result.is_valid and result.score > best_score:
+                    best_line = candidate
+                    best_score = result.score
+            
+            # Summary
+            print("\n" + "=" * 70)
+            print("  📦 GENERATION RESULT")
+            print("=" * 70)
+            print(f"  • Candidates: {len(candidates)}")
+            print(f"  • Valid: {sum(1 for v in validations if v.is_valid)}")
+            print(f"  • Best: \"{best_line}\" (score: {best_score:.2f})" if best_line else "  • Best: None")
+            print("=" * 70 + "\n")
+            
+        except Exception as e:
+            print(f"\n  ❌ Pipeline error: {e}")
+            import traceback
+            traceback.print_exc()
         
-        return PipelineResult(
+        return GenerationResult(
+            candidates=candidates,
+            validations=validations,
             best_line=best_line,
-            score=score,
-            all_candidates=candidates,
-            all_validations=validations,
+            best_score=best_score,
+            metadata=metadata,
             pivot_json=pivot_json
         )
 

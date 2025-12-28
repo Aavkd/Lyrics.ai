@@ -153,10 +153,14 @@ class LyricValidator:
         """
         Calculate the "Groove Score" - how well text stress matches audio stress.
         
-        Scoring Logic:
-        - +1 point if audio is stressed (True) and text has primary stress (1)
-        - +1 point if audio is unstressed (False) and text is unstressed (0)
-        - No points for mismatches or secondary stress (handled neutrally)
+        IMPROVED Scoring Logic (Phase 1 calibration):
+        - +2 points if both audio and text are stressed (hitting the beat!)
+        - +1 point if both are unstressed (consistent flow)
+        - +0.5 points for secondary stress (2) on stressed audio
+        - 0 points for mismatches (missing the beat is neutral, not actively bad)
+        
+        The weighting ensures stressed beat alignment matters 2x more than
+        unstressed alignment, addressing the "0.29 score" issue from testing.
         
         Args:
             text_stress: List of stress levels [0, 1, 2] from phonemes.
@@ -172,21 +176,29 @@ class LyricValidator:
         if not text_stress:
             return 0.0
         
-        points = 0
-        max_points = len(text_stress)
+        points = 0.0
+        # Max points: 2 for each stressed + 1 for each unstressed
+        stressed_count = sum(1 for s in audio_stress if s)
+        unstressed_count = len(audio_stress) - stressed_count
+        max_points = (stressed_count * 2) + unstressed_count
+        
+        if max_points == 0:
+            return 0.0
         
         for text_s, audio_s in zip(text_stress, audio_stress):
             if audio_s:
                 # Audio segment is stressed -> text should have primary stress (1)
                 if text_s == 1:
-                    points += 1
+                    points += 2  # Double reward for hitting stressed beats
                 elif text_s == 2:
                     # Secondary stress is a partial match
                     points += 0.5
+                # Mismatch (text_s == 0) gets 0 points
             else:
                 # Audio segment is unstressed -> text should be unstressed (0)
                 if text_s == 0:
                     points += 1
+                # Stressed text on unstressed audio is neutral (0 points)
         
         return points / max_points
     

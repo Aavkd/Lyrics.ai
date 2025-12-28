@@ -75,25 +75,34 @@ def test_validator_stress_extraction():
 
 
 def test_validator_groove_score():
-    """Test groove score calculation for stress matching."""
+    """Test groove score calculation for stress matching.
+    
+    Updated for Phase 1 weighted scoring:
+    - Stressed matches = 2 points
+    - Unstressed matches = 1 point
+    - Max points = (stressed_count * 2) + unstressed_count
+    """
     print("\n📈 Testing Groove Score Calculation...")
     
     validator = LyricValidator()
     
     # Perfect match: [1, 0] text stress with [True, False] audio stress
+    # Max points = (1 * 2) + 1 = 3, earned = 2 + 1 = 3 -> 1.0
     score1 = validator.calculate_groove_score([1, 0], [True, False])
     print(f"   Perfect match [1,0] vs [T,F]: score = {score1}")
     assert score1 == 1.0, "Perfect match should score 1.0"
     
     # Complete mismatch: [0, 1] vs [True, False]
+    # Max points = 3, earned = 0 + 0 = 0 -> 0.0
     score2 = validator.calculate_groove_score([0, 1], [True, False])
     print(f"   Mismatch [0,1] vs [T,F]: score = {score2}")
     assert score2 == 0.0, "Complete mismatch should score 0.0"
     
-    # Partial match: [1, 1] vs [True, False] (first matches, second doesn't)
+    # Partial match: [1, 1] vs [True, False] (first matches stressed, second misses unstressed)
+    # Max points = (1 * 2) + 1 = 3, earned = 2 + 0 = 2 -> 0.667
     score3 = validator.calculate_groove_score([1, 1], [True, False])
-    print(f"   Partial [1,1] vs [T,F]: score = {score3}")
-    assert score3 == 0.5, f"Partial match should score 0.5, got {score3}"
+    print(f"   Partial [1,1] vs [T,F]: score = {score3:.2f}")
+    assert abs(score3 - 0.667) < 0.01, f"Partial match should score ~0.67, got {score3}"
     
     # Empty arrays
     score4 = validator.calculate_groove_score([], [])

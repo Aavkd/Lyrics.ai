@@ -7,7 +7,10 @@ and robustly parse LLM responses.
 Test Focus:
 1. Real Ollama connection and model availability
 2. Robust JSON parsing from "dirty" LLM output
-3. Integration test with actual ministral-3:8b generation
+3. Integration test with real LLM generation (model from config)
+
+Configuration:
+    Model and Ollama settings are loaded from .env file via config module.
 """
 
 import sys
@@ -16,22 +19,23 @@ import os
 # Add parent dir to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from config import config
 from generation_engine import GenerationEngine
 
 
 def test_ollama_connection():
-    """Test that Ollama is running and ministral-3:8b is available."""
-    print("\n🔌 Testing Ollama Connection...")
+    """Test that Ollama is running and configured model is available."""
+    print(f"\n🔌 Testing Ollama Connection (model: {config.OLLAMA_MODEL})...")
     
     engine = GenerationEngine()
     
     if engine.test_connection():
-        print("✅ Ollama is running and ministral-3:8b is available")
+        print(f"✅ Ollama is running and {config.OLLAMA_MODEL} is available")
         return True
     else:
         print("❌ FAIL: Cannot connect to Ollama or model not found")
         print("   Make sure Ollama is running: ollama serve")
-        print("   Make sure model is pulled: ollama pull ministral-3:8b")
+        print(f"   Make sure model is pulled: ollama pull {config.OLLAMA_MODEL}")
         return False
 
 
@@ -100,11 +104,11 @@ def test_malformed_json_recovery():
 
 def test_real_generation():
     """Integration test: Generate real candidates from Ollama."""
-    print("\n🧠 Testing Real LLM Generation with ministral-3:8b...")
+    print(f"\n🧠 Testing Real LLM Generation with {config.OLLAMA_MODEL}...")
     
+    # Uses config defaults for model, url, temperature
     engine = GenerationEngine(
-        model="ministral-3:8b",
-        temperature=0.7
+        temperature=0.7  # Override just temperature for consistent test results
     )
     
     # First check connection

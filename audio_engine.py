@@ -33,6 +33,7 @@ class Segment:
     duration: float
     is_stressed: bool = False
     is_sustained: bool = False
+    pitch_contour: str = "mid"  # "low", "mid", "high", "rising", "falling"
 
 
 @dataclass
@@ -66,7 +67,8 @@ class PivotJSON:
                             "time_start": round(seg.time_start, 3),
                             "duration": round(seg.duration, 3),
                             "is_stressed": seg.is_stressed,
-                            "is_sustained": seg.is_sustained
+                            "is_sustained": seg.is_sustained,
+                            "pitch_contour": seg.pitch_contour
                         }
                         for seg in block.segments
                     ]
@@ -220,8 +222,24 @@ class LibrosaAnalyzer:
         else:
             tempo = float(tempo)
         
-        # Detect onsets (syllable start points)
-        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, units='frames')
+        # Compute onset strength envelope
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        
+        # Detect onsets using OPTIMIZED "Less Sensitive" config
+        # (Found via precision tuning on user's audio samples - see tests/test_precision_tuning.py)
+        # This reduces false positive syllable detections
+        onset_frames = librosa.onset.onset_detect(
+            onset_envelope=onset_env,
+            sr=sr,
+            backtrack=True,
+            wait=1,
+            pre_max=1,
+            post_max=1,
+            pre_avg=1,
+            post_avg=1,
+            delta=0.1,  # Higher threshold = fewer false positives
+            units='frames'
+        )
         onset_times = librosa.frames_to_time(onset_frames, sr=sr)
         
         return AnalysisResult(
@@ -363,9 +381,97 @@ class PivotFormatter:
         """
         return [bool(d > self.sustain_threshold) for d in durations]
     
+    def _detect_pitch(
+        self,
+        y: np.ndarray,
+        sr: int,
+        onset_times: list[float],
+        durations: list[float]
+    ) -> list[str]:
+        """
+        Detect pitch contour for each segment using pYIN algorithm.
+        
+        Pitch is categorized as:
+        - "low": median frequency < 150 Hz (bass range)
+        - "mid": median frequency 150-300 Hz (typical speech)
+        - "high": median frequency > 300 Hz (higher vocals)
+        - "rising": start pitch < end pitch by > 20%
+        - "falling": start pitch > end pitch by > 20%
+        
+        Args:
+            y: Audio signal array.
+            sr: Sample rate.
+            onset_times: List of segment start times.
+            durations: List of segment durations.
+            
+        Returns:
+            List of pitch contour strings for each segment.
+        """
+        if y is None or len(y) == 0:
+            return ["mid"] * len(onset_times)
+        
+        # Use pYIN for pitch tracking (more accurate than piptrack for vocals)
+        # fmin=50 for low vocals, fmax=500 for high vocals
+        try:
+            f0, voiced_flag, voiced_probs = librosa.pyin(
+                y, 
+                fmin=librosa.note_to_hz('C2'),  # ~65 Hz
+                fmax=librosa.note_to_hz('C6'),  # ~1047 Hz
+                sr=sr
+            )
+        except Exception:
+            # Fallback if pyin fails
+            return ["mid"] * len(onset_times)
+        
+        # Convert frames to time
+        times = librosa.times_like(f0, sr=sr)
+        
+        pitch_contours = []
+        
+        for onset_time, duration in zip(onset_times, durations):
+            end_time = onset_time + duration
+            
+            # Find pitch values within this segment
+            mask = (times >= onset_time) & (times < end_time)
+            segment_pitches = f0[mask]
+            
+            # Filter out NaN (unvoiced frames)
+            valid_pitches = segment_pitches[~np.isnan(segment_pitches)]
+            
+            if len(valid_pitches) == 0:
+                pitch_contours.append("mid")
+                continue
+            
+            median_pitch = np.median(valid_pitches)
+            
+            # Check for rising/falling contour
+            if len(valid_pitches) >= 3:
+                start_pitch = np.mean(valid_pitches[:len(valid_pitches)//3])
+                end_pitch = np.mean(valid_pitches[-len(valid_pitches)//3:])
+                
+                if not np.isnan(start_pitch) and not np.isnan(end_pitch):
+                    ratio = end_pitch / start_pitch if start_pitch > 0 else 1.0
+                    
+                    if ratio > 1.2:  # >20% increase
+                        pitch_contours.append("rising")
+                        continue
+                    elif ratio < 0.8:  # >20% decrease
+                        pitch_contours.append("falling")
+                        continue
+            
+            # Categorize by absolute pitch
+            if median_pitch < 150:
+                pitch_contours.append("low")
+            elif median_pitch > 300:
+                pitch_contours.append("high")
+            else:
+                pitch_contours.append("mid")
+        
+        return pitch_contours
+    
     def format(self, analysis: AnalysisResult) -> PivotJSON:
         """
-        Format analysis results into Pivot JSON with stress/sustain detection.
+        Format analysis results into Pivot JSON with stress/sustain/pitch detection.
         
         Args:
             analysis: AnalysisResult from LibrosaAnalyzer.
@@ -396,18 +502,20 @@ class PivotFormatter:
             # No audio signal available, all RMS = 0
             rms_values = [0.0] * len(onset_times)
         
-        # Detect stress and sustain
+        # Detect stress, sustain, and pitch
         stressed = self._detect_stress(rms_values)
         sustained = self._detect_sustain(durations)
+        pitch_contours = self._detect_pitch(y, sr, onset_times, durations)
         
-        # Build segments with detected features
+        # Build segments with all detected features
         segments = []
         for i, onset_time in enumerate(onset_times):
             segments.append(Segment(
                 time_start=onset_time,
                 duration=durations[i],
                 is_stressed=stressed[i] if i < len(stressed) else False,
-                is_sustained=sustained[i] if i < len(sustained) else False
+                is_sustained=sustained[i] if i < len(sustained) else False,
+                pitch_contour=pitch_contours[i] if i < len(pitch_contours) else "mid"
             ))
         
         # Create single block containing all segments (MVP approach)

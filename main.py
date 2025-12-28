@@ -7,6 +7,10 @@ FastAPI application that:
 1. Accepts audio file uploads (MP3/WAV)
 2. Processes them through the audio engine
 3. Returns the Pivot JSON for frontend consumption
+
+Configuration:
+    All settings are loaded from .env file via config module.
+    See .env.example for available options.
 """
 
 from __future__ import annotations
@@ -23,16 +27,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from audio_engine import AudioEngine, PivotJSON
+from config import config
 
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Environment variables
-MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"
+# Use centralized config module
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 # =============================================================================
@@ -46,9 +49,10 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     print("  Flow-to-Lyrics API v1.0")
     print("=" * 60)
-    print(f"  Mock Mode: {MOCK_MODE}")
+    print(f"  LLM Model: {config.OLLAMA_MODEL}")
+    print(f"  Mock Mode: {config.MOCK_MODE}")
     print(f"  Allowed Extensions: {ALLOWED_EXTENSIONS}")
-    print(f"  Max File Size: {MAX_FILE_SIZE / 1024 / 1024:.0f} MB")
+    print(f"  Max File Size: {config.MAX_FILE_SIZE_MB} MB")
     print("=" * 60)
     
     yield
@@ -100,7 +104,8 @@ async def root():
     return {
         "status": "ok",
         "message": "Flow-to-Lyrics API v1.0",
-        "mock_mode": MOCK_MODE
+        "mock_mode": config.MOCK_MODE,
+        "llm_model": config.OLLAMA_MODEL
     }
 
 
@@ -110,9 +115,11 @@ async def health_check():
     return {
         "status": "healthy",
         "version": "1.0.0",
-        "mock_mode": MOCK_MODE,
+        "mock_mode": config.MOCK_MODE,
+        "llm_model": config.OLLAMA_MODEL,
+        "ollama_url": config.OLLAMA_URL,
         "allowed_extensions": list(ALLOWED_EXTENSIONS),
-        "max_file_size_mb": MAX_FILE_SIZE / 1024 / 1024
+        "max_file_size_mb": config.MAX_FILE_SIZE_MB
     }
 
 
@@ -152,16 +159,16 @@ async def upload_audio(file: UploadFile = File(...)):
         
         # Check file size
         file_size = temp_file_path.stat().st_size
-        if file_size > MAX_FILE_SIZE:
+        if file_size > config.MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File too large. Maximum size: {MAX_FILE_SIZE / 1024 / 1024:.0f} MB"
+                detail=f"File too large. Maximum size: {config.MAX_FILE_SIZE_MB} MB"
             )
         
         print(f"[API] File size: {file_size / 1024 / 1024:.2f} MB")
         
         # Process through audio engine
-        engine = AudioEngine(mock_mode=MOCK_MODE)
+        engine = AudioEngine(mock_mode=config.MOCK_MODE)
         pivot_json = engine.process(str(temp_file_path), output_dir=temp_dir)
         
         # Convert to dict for JSON response
@@ -171,7 +178,8 @@ async def upload_audio(file: UploadFile = File(...)):
         result["_meta"] = {
             "filename": file.filename,
             "file_size_bytes": file_size,
-            "mock_mode": MOCK_MODE
+            "mock_mode": config.MOCK_MODE,
+            "llm_model": config.OLLAMA_MODEL
         }
         
         print(f"[API] Processing complete. Tempo: {result['meta']['tempo']} BPM")
