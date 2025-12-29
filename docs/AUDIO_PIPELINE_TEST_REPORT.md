@@ -1,6 +1,6 @@
 # 🎵 Audio Pipeline Test Report
 
-**Generated:** 2025-12-29 00:02  
+**Generated:** 2025-12-29 01:51  
 **Test Type:** Syllable Detection Analysis (No LLM)  
 **Phoneme Analysis:** Disabled (testing audio/syllable pipeline only)
 
@@ -12,10 +12,10 @@
 |--------|-------|
 | Files Tested | 7 |
 | Perfect Matches | 3/7 |
-| Close Matches (±1) | 4/7 |
+| Close Matches (±1) | 6/7 |
 | Total Expected Syllables | 39 |
-| Total Detected Syllables | 45 |
-| Total Absolute Error | 8 |
+| Total Detected Syllables | 38 |
+| Total Absolute Error | 5 |
 
 ---
 
@@ -50,15 +50,15 @@
 
 ### 99_problems.m4a
 
-**Status:** ✅ PASS
+**Status:** ⚠️ CLOSE
 
 | Property | Value |
 |----------|-------|
 | Expected Phrase | "99 problems" |
 | Syllable Breakdown | Nine(1) ty(1) nine(1) prob(1) lems(1) |
 | Expected Syllables | 5 |
-| Detected Syllables | 5 |
-| Error | 0 |
+| Detected Syllables | 4 |
+| Error | -1 |
 | Tempo | 71.78 BPM |
 | Duration | 2.603s |
 
@@ -66,25 +66,24 @@
 
 | # | Start (s) | Duration (s) | Stressed | Sustained | Pitch |
 |---|-----------|--------------|----------|-----------|-------|
-| 1 | 0.186 | 0.372 |  |  | low |
-| 2 | 0.557 | 0.070 | 🔊 |  | low |
-| 3 | 0.627 | 0.441 |  | ⏸ | low |
-| 4 | 1.068 | 0.093 |  |  | low |
-| 5 | 1.161 | 0.200 |  |  | low |
+| 1 | 0.186 | 0.372 | 🔊 |  | low |
+| 2 | 0.557 | 0.511 |  | ⏸ | low |
+| 3 | 1.068 | 0.093 |  |  | low |
+| 4 | 1.161 | 0.200 |  |  | low |
 
 ---
 
 ### everybody_equal.m4a
 
-**Status:** ❌ FAIL
+**Status:** ⚠️ CLOSE
 
 | Property | Value |
 |----------|-------|
 | Expected Phrase | "Everybody equal" |
 | Syllable Breakdown | Ev(1) ry(1) bo(1) dy(1) e(1) qual(1) |
 | Expected Syllables | 6 |
-| Detected Syllables | 8 |
-| Error | +2 |
+| Detected Syllables | 5 |
+| Error | -1 |
 | Tempo | 136.0 BPM |
 | Duration | 2.389s |
 
@@ -93,27 +92,24 @@
 | # | Start (s) | Duration (s) | Stressed | Sustained | Pitch |
 |---|-----------|--------------|----------|-----------|-------|
 | 1 | 0.046 | 0.163 |  |  | mid |
-| 2 | 0.209 | 0.279 | 🔊 |  | mid |
-| 3 | 0.488 | 0.186 |  |  | mid |
-| 4 | 0.673 | 0.395 |  |  | mid |
-| 5 | 1.068 | 0.093 |  |  | mid |
-| 6 | 1.161 | 0.604 | 🔊 | ⏸ | mid |
-| 7 | 1.765 | 0.232 |  |  | mid |
-| 8 | 1.997 | 0.200 |  |  | mid |
+| 2 | 0.209 | 0.464 | 🔊 | ⏸ | mid |
+| 3 | 0.673 | 0.488 | 🔊 | ⏸ | mid |
+| 4 | 1.161 | 0.836 |  | ⏸ | mid |
+| 5 | 1.997 | 0.200 |  |  | mid |
 
 ---
 
 ### mumble_on_this_beat.m4a
 
-**Status:** ❌ FAIL
+**Status:** ✅ PASS
 
 | Property | Value |
 |----------|-------|
 | Expected Phrase | "Mumble on this beat" |
 | Syllable Breakdown | Mum(1) ble(1) on(1) this(1) beat(1) |
 | Expected Syllables | 5 |
-| Detected Syllables | 8 |
-| Error | +3 |
+| Detected Syllables | 5 |
+| Error | 0 |
 | Tempo | 66.26 BPM |
 | Duration | 2.24s |
 
@@ -124,11 +120,8 @@
 | 1 | 0.046 | 0.372 |  |  | mid |
 | 2 | 0.418 | 0.116 | 🔊 |  | low |
 | 3 | 0.534 | 0.232 | 🔊 |  | mid |
-| 4 | 0.766 | 0.186 |  |  | low |
-| 5 | 0.952 | 0.232 |  |  | low |
-| 6 | 1.184 | 0.163 |  |  | low |
-| 7 | 1.347 | 0.650 | 🔊 | ⏸ | low |
-| 8 | 1.997 | 0.200 |  |  | mid |
+| 4 | 0.766 | 0.580 |  | ⏸ | low |
+| 5 | 1.347 | 0.200 |  |  | rising |
 
 ---
 
@@ -217,17 +210,18 @@
 
 ### Observations
 
-- **Perfect Detection (3 files):** `talk_to_me_i_said_what.m4a`, `99_problems.m4a`, `what_bout_you.m4a`
-- **Under-Detection (1 files):** `trying_to_take_my_time.m4a` (expected 6, got 5)
-- **Over-Detection (3 files):** `everybody_equal.m4a` (expected 6, got 8), `mumble_on_this_beat.m4a` (expected 5, got 8), `oh_ma_oh_ma_on_my_tec_nine.m4a` (expected 8, got 10)
+- **Perfect Detection (3 files):** `talk_to_me_i_said_what.m4a`, `mumble_on_this_beat.m4a`, `what_bout_you.m4a`
+- **Under-Detection (3 files):** `99_problems.m4a` (expected 5, got 4), `everybody_equal.m4a` (expected 6, got 5), `trying_to_take_my_time.m4a` (expected 6, got 5)
+- **Over-Detection (1 files):** `oh_ma_oh_ma_on_my_tec_nine.m4a` (expected 8, got 10)
 
 ### Potential Issues
 
 **Long Segments Detected (may indicate missed syllables):**
 
 - `talk_to_me_i_said_what.m4a`: 1 segment(s) > 0.5s (max: 0.836s)
-- `everybody_equal.m4a`: 1 segment(s) > 0.5s (max: 0.604s)
-- `mumble_on_this_beat.m4a`: 1 segment(s) > 0.5s (max: 0.650s)
+- `99_problems.m4a`: 1 segment(s) > 0.5s (max: 0.511s)
+- `everybody_equal.m4a`: 1 segment(s) > 0.5s (max: 0.836s)
+- `mumble_on_this_beat.m4a`: 1 segment(s) > 0.5s (max: 0.580s)
 - `what_bout_you.m4a`: 1 segment(s) > 0.5s (max: 0.511s)
 
 

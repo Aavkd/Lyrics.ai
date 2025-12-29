@@ -1,7 +1,7 @@
 # 🏗️ Flow-to-Lyrics Architecture
 
-**Last Updated**: 2025-12-28  
-**Version**: 2.2 (Post Phase D - Full-Audio Whisper + Syllable Alignment)  
+**Last Updated**: 2025-12-29  
+**Version**: 2.3 (Post Phase D - Full-Audio Whisper + Syllable Validation)  
 **Context**: Technical documentation for "Flow-to-Lyrics" MVP.
 
 ---
@@ -56,7 +56,7 @@ graph TD
 | File | Type | Lines | Responsibilities |
 |------|------|-------|------------------|
 | `main.py` | API Entry | ~223 | FastAPI app, CORS, `/upload` endpoint, temp file mgmt. |
-| `audio_engine.py` | DSP Core | ~1900 | **DemucsProcessor**: Vocal isolation.<br>**WhisperPhoneticAnalyzer**: Full-audio transcription with word timestamps (Phase D), syllable splitting with onset maximization, sequential alignment.<br>**PhoneticAnalyzer**: Backend selection (Whisper/Allosaurus), fallback classification.<br>**LibrosaAnalyzer**: Adaptive onset detection (spectral + energy), BPM, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection, segment splitting, breath filtering. |
+| `audio_engine.py` | DSP Core | ~2100 | **DemucsProcessor**: Vocal isolation.<br>**WhisperPhoneticAnalyzer**: Full-audio transcription with word timestamps, syllable splitting, sequential alignment, `count_syllables_in_words()`.<br>**PhoneticAnalyzer**: Backend selection (Whisper/Allosaurus), fallback classification.<br>**LibrosaAnalyzer**: Adaptive onset detection with `_calculate_adaptive_delta()`, **Whisper-guided validation** via `_validate_with_whisper()`, BPM, pitch.<br>**PivotFormatter**: Stress/sustain/pitch detection, segment splitting, breath filtering, min segment filter.<br>**`get_whisper_analyzer()`**: Module-level singleton for cached Whisper model. |
 | `prompt_engine.py` | Translator | ~351 | Converts PivotJSON → LLM prompts with stress/sustain/pitch guidance. |
 | `generation_engine.py` | LLM Brain | ~421 | Ollama HTTP integration (local + cloud), JSON parsing. |
 | `validator.py` | Gatekeeper | ~365 | g2p_en phonetic validation, syllable counting, groove scoring. |
@@ -167,6 +167,17 @@ All configuration is centralized in `config.py` and loaded from `.env`:
 | `PHONETIC_PADDING` | `0.05` | Context padding on each side (seconds) |
 | `PHONETIC_RETRY_PADDING` | `0.10` | Expanded retry padding when first attempt fails |
 | `PHONETIC_FALLBACK_ENABLED` | `true` | Enable `[vowel]`/`[consonant]` fallback |
+
+### Syllable Detection (Overhaul 2025-12-29)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADAPTIVE_DELTA_ENABLED` | `true` | Auto-adjust delta per-file using CV |
+| `ADAPTIVE_DELTA_FALLBACK` | `true` | Use ONSET_DELTA as bound |
+| `MIN_SEGMENT_DURATION` | `0.08` | Merge segments shorter than 80ms |
+| `BREATH_FILTER_ENERGY_RATIO` | `0.15` | Energy threshold for breath filtering |
+| `BREATH_FILTER_MAX_DURATION` | `0.15` | Duration threshold for breath filtering |
+| `WHISPER_VALIDATION_ENABLED` | `true` | Whisper-guided syllable validation |
 
 > [!NOTE]
 > **Phase C Implemented:** Whisper + g2p_en pipeline provides context-aware transcription for mumbled vocals. Automatic fallback to Allosaurus when Whisper unavailable. See [PHONETIC_ACCURACY_ISSUE.md](./PHONETIC_ACCURACY_ISSUE.md) for details.

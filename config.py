@@ -177,6 +177,76 @@ class Config:
             return 1
     
     # =========================================================================
+    # SYLLABLE DETECTION (Advanced)
+    # =========================================================================
+    
+    @property
+    def ADAPTIVE_DELTA_ENABLED(self) -> bool:
+        """Enable adaptive onset delta calculation.
+        
+        When enabled, the onset detection sensitivity is automatically
+        calculated per audio file using median+MAD statistics.
+        This helps handle different recording qualities and styles.
+        """
+        return os.getenv("ADAPTIVE_DELTA_ENABLED", "true").lower() == "true"
+    
+    @property
+    def ADAPTIVE_DELTA_FALLBACK(self) -> bool:
+        """Use ONSET_DELTA as minimum bound for adaptive calculation.
+        
+        When enabled, the adaptive delta will not go below ONSET_DELTA.
+        This prevents over-sensitivity in noisy recordings.
+        """
+        return os.getenv("ADAPTIVE_DELTA_FALLBACK", "true").lower() == "true"
+    
+    @property
+    def MIN_SEGMENT_DURATION(self) -> float:
+        """Minimum segment duration in seconds.
+        
+        Segments shorter than this will be merged with neighbors.
+        Prevents micro-segments from causing over-detection.
+        Default: 0.08 (80ms) - typical consonant duration.
+        """
+        try:
+            return float(os.getenv("MIN_SEGMENT_DURATION", "0.08"))
+        except ValueError:
+            return 0.08
+    
+    @property
+    def BREATH_FILTER_ENERGY_RATIO(self) -> float:
+        """Energy threshold for breath detection (relative to track max).
+        
+        Segments with energy below this ratio are candidates for filtering.
+        Lower values = filter fewer segments (keep more quiet syllables).
+        Default: 0.15 (15% of max energy).
+        """
+        try:
+            return float(os.getenv("BREATH_FILTER_ENERGY_RATIO", "0.15"))
+        except ValueError:
+            return 0.15
+    
+    @property
+    def BREATH_FILTER_MAX_DURATION(self) -> float:
+        """Maximum duration for breath filter to apply (seconds).
+        
+        Only short segments (< this duration) are candidates for filtering.
+        Default: 0.15 (150ms).
+        """
+        try:
+            return float(os.getenv("BREATH_FILTER_MAX_DURATION", "0.15"))
+        except ValueError:
+            return 0.15
+    
+    @property
+    def WHISPER_VALIDATION_ENABLED(self) -> bool:
+        """Enable Whisper-guided syllable count validation.
+        
+        Uses Whisper's word transcription to validate and adjust
+        the number of detected segments. Results are cached.
+        """
+        return os.getenv("WHISPER_VALIDATION_ENABLED", "true").lower() == "true"
+    
+    # =========================================================================
     # PHONETIC ANALYSIS
     # =========================================================================
     

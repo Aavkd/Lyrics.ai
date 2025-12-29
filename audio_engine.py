@@ -252,6 +252,17 @@ def classify_sound_type(y_segment: np.ndarray, sr: int) -> str:
 # WHISPER PHONETIC ANALYZER - PHASE C (improved accuracy for mumbled vocals)
 # =============================================================================
 
+# Module-level singleton for WhisperPhoneticAnalyzer (loads once per session)
+_WHISPER_ANALYZER_SINGLETON = None
+
+def get_whisper_analyzer() -> 'WhisperPhoneticAnalyzer':
+    """Get the shared WhisperPhoneticAnalyzer instance (singleton pattern)."""
+    global _WHISPER_ANALYZER_SINGLETON
+    if _WHISPER_ANALYZER_SINGLETON is None:
+        _WHISPER_ANALYZER_SINGLETON = WhisperPhoneticAnalyzer()
+    return _WHISPER_ANALYZER_SINGLETON
+
+
 class WhisperPhoneticAnalyzer:
     """
     Whisper-based phonetic analyzer for improved accuracy on mumbled/sung vocals.
@@ -265,6 +276,9 @@ class WhisperPhoneticAnalyzer:
         analyzer = WhisperPhoneticAnalyzer(model_size="base")
         ipa = analyzer.analyze_segment(audio_chunk, sample_rate=22050)
         # Returns: "/tɔk tə mi/" (English phonemes)
+        
+        # Or use the singleton for efficiency:
+        analyzer = get_whisper_analyzer()
     """
     
     def __init__(self, model_size: str = None):
@@ -499,6 +513,45 @@ class WhisperPhoneticAnalyzer:
         except Exception as e:
             print(f"[WhisperPhoneticAnalyzer] Full-audio transcription failed: {e}")
             return []
+    
+    def count_syllables_in_words(self, words: list[dict]) -> int:
+        """
+        Count total syllables in transcribed words using g2p_en.
+        
+        Uses the G2P (Grapheme-to-Phoneme) library to count vowel sounds,
+        which correspond to syllables in English.
+        
+        Args:
+            words: List of word dicts from transcribe_full_audio().
+            
+        Returns:
+            Total syllable count across all words.
+        """
+        self._lazy_init()
+        
+        if self.g2p is None or not words:
+            return 0
+        
+        total_syllables = 0
+        for word_dict in words:
+            word = word_dict.get("word", "").strip()
+            if not word:
+                continue
+            
+            # Convert word to phonemes using g2p_en
+            try:
+                phonemes = self.g2p(word)
+                # Count vowel phonemes (AA, AE, AH, AO, AW, AY, EH, ER, EY, IH, IY, OW, OY, UH, UW)
+                # Vowels end with a digit indicating stress (0, 1, 2)
+                syllable_count = sum(1 for p in phonemes if p[-1].isdigit()) if phonemes else 1
+                # Minimum 1 syllable per word
+                syllable_count = max(1, syllable_count)
+                total_syllables += syllable_count
+            except Exception:
+                # Fallback: estimate 1 syllable per 3 characters
+                total_syllables += max(1, len(word) // 3)
+        
+        return total_syllables
     
     def _align_words_to_segments(
         self,
@@ -1063,6 +1116,7 @@ class LibrosaAnalyzer:
     1. Spectral flux onset detection (primary)
     2. Energy-based onset detection (secondary, optional)
     3. Merged, deduplicated onset times
+    4. Adaptive delta calculation (auto-tunes per file)
     """
     
     def __init__(self, sample_rate: int = 22050):
@@ -1080,17 +1134,160 @@ class LibrosaAnalyzer:
             self.onset_delta = config.ONSET_DELTA
             self.use_energy_detection = config.ONSET_USE_ENERGY
             self.onset_wait = config.ONSET_WAIT
+            self.adaptive_delta_enabled = config.ADAPTIVE_DELTA_ENABLED
+            self.adaptive_delta_fallback = config.ADAPTIVE_DELTA_FALLBACK
+            self.whisper_validation_enabled = config.WHISPER_VALIDATION_ENABLED
         except ImportError:
             # Fallback defaults if config not available
             self.onset_delta = 0.05
             self.use_energy_detection = True
             self.onset_wait = 1
+            self.adaptive_delta_enabled = True
+            self.adaptive_delta_fallback = True
+            self.whisper_validation_enabled = True
+        
+        # Cached WhisperPhoneticAnalyzer (lazy-loaded once)
+        self._whisper_analyzer = None
+    
+    def _calculate_adaptive_delta(self, onset_env: np.ndarray) -> float:
+        """
+        Calculate adaptive onset threshold based on audio statistics.
+        
+        Uses ONSET_DELTA as base and adjusts slightly based on audio characteristics:
+        - High variation audio (many peaks): increase delta slightly to reduce false positives
+        - Low variation audio (clean vocals): decrease delta slightly to catch all onsets
+        
+        Adjustment range is ±30% of base ONSET_DELTA to keep behavior predictable.
+        
+        Args:
+            onset_env: Onset strength envelope from librosa.
+            
+        Returns:
+            Adaptive delta value, adjusted from ONSET_DELTA.
+        """
+        if len(onset_env) == 0:
+            return self.onset_delta
+        
+        # Calculate coefficient of variation (normalized measure of variation)
+        mean_env = np.mean(onset_env)
+        std_env = np.std(onset_env)
+        
+        if mean_env < 1e-10:
+            return self.onset_delta
+        
+        cv = std_env / mean_env  # Coefficient of variation
+        
+        # Typical CV for clean vocals: 0.5-1.0
+        # Higher CV = more peaks = need higher delta to avoid over-detection
+        # Lower CV = smoother signal = can use lower delta
+        
+        # Map CV to adjustment factor: cv=0.5 -> 0.8x, cv=1.5 -> 1.2x
+        # This gives ±20% range centered around cv=1.0
+        adjustment = 0.8 + 0.4 * min(cv, 1.5) / 1.5
+        
+        adaptive_delta = self.onset_delta * adjustment
+        
+        # Clamp to reasonable range
+        if self.adaptive_delta_fallback:
+            min_delta = self.onset_delta * 0.7  # At most 30% more sensitive
+        else:
+            min_delta = 0.02
+        
+        max_delta = self.onset_delta * 1.5  # At most 50% less sensitive
+        
+        final_delta = float(np.clip(adaptive_delta, min_delta, max_delta))
+        return final_delta
+    
+    def _validate_with_whisper(
+        self,
+        y: np.ndarray,
+        sr: int,
+        onset_env: np.ndarray,
+        initial_onsets: int,
+        initial_delta: float
+    ) -> tuple[list[float], float]:
+        """
+        Use Whisper to validate and adjust syllable detection.
+        
+        If detected onsets diverge significantly from Whisper's syllable count,
+        adjust delta and re-detect.
+        
+        Args:
+            y: Audio signal.
+            sr: Sample rate.
+            onset_env: Onset strength envelope.
+            initial_onsets: Number of onsets from initial detection.
+            initial_delta: Delta used for initial detection.
+            
+        Returns:
+            Tuple of (adjusted_onset_times, final_delta).
+        """
+        # Get Whisper transcription and syllable count
+        try:
+            # Use module-level singleton (loads once per Python session)
+            analyzer = get_whisper_analyzer()
+            
+            words = analyzer.transcribe_full_audio(y, sr)
+            expected_syllables = analyzer.count_syllables_in_words(words)
+            
+            if expected_syllables == 0:
+                # Whisper failed or no speech detected
+                onsets = self._detect_onsets_spectral(y, sr, onset_env, delta=initial_delta)
+                return onsets.tolist(), initial_delta
+            
+            print(f"[LibrosaAnalyzer] Whisper expected syllables: {expected_syllables}")
+            
+            # If initial detection is close enough (within 30%), keep it
+            if initial_onsets > 0:
+                error_ratio = abs(initial_onsets - expected_syllables) / expected_syllables
+                if error_ratio <= 0.3:
+                    print(f"[LibrosaAnalyzer] Detection within 30% tolerance, keeping {initial_onsets} onsets")
+                    onsets = self._detect_onsets_spectral(y, sr, onset_env, delta=initial_delta)
+                    return onsets.tolist(), initial_delta
+            
+            # Iteratively adjust delta to match expected syllable count
+            best_onsets = []
+            best_delta = initial_delta
+            best_error = abs(initial_onsets - expected_syllables)
+            
+            # Try a range of delta values
+            delta_range = [
+                initial_delta * 0.5,   # More sensitive
+                initial_delta * 0.7,
+                initial_delta * 1.0,
+                initial_delta * 1.3,
+                initial_delta * 1.5,   # Less sensitive
+                initial_delta * 2.0,
+                initial_delta * 2.5,
+            ]
+            
+            for test_delta in delta_range:
+                test_onsets = self._detect_onsets_spectral(y, sr, onset_env, delta=test_delta)
+                error = abs(len(test_onsets) - expected_syllables)
+                
+                if error < best_error:
+                    best_error = error
+                    best_delta = test_delta
+                    best_onsets = test_onsets.tolist()
+                
+                # Perfect match, stop searching
+                if error == 0:
+                    break
+            
+            print(f"[LibrosaAnalyzer] Whisper-guided: delta {initial_delta:.4f} -> {best_delta:.4f}, onsets {initial_onsets} -> {len(best_onsets)}")
+            return best_onsets, best_delta
+            
+        except Exception as e:
+            print(f"[LibrosaAnalyzer] Whisper validation failed: {e}")
+            onsets = self._detect_onsets_spectral(y, sr, onset_env, delta=initial_delta)
+            return onsets.tolist(), initial_delta
     
     def _detect_onsets_spectral(
         self, 
         y: np.ndarray, 
         sr: int,
-        onset_env: np.ndarray
+        onset_env: np.ndarray,
+        delta: float = None
     ) -> np.ndarray:
         """
         Detect onsets using spectral flux method.
@@ -1099,10 +1296,14 @@ class LibrosaAnalyzer:
             y: Audio signal.
             sr: Sample rate.
             onset_env: Pre-computed onset strength envelope.
+            delta: Optional delta threshold. Uses self.onset_delta if None.
             
         Returns:
             Array of onset times in seconds.
         """
+        if delta is None:
+            delta = self.onset_delta
+        
         onset_frames = librosa.onset.onset_detect(
             onset_envelope=onset_env,
             sr=sr,
@@ -1112,7 +1313,7 @@ class LibrosaAnalyzer:
             post_max=1,
             pre_avg=1,
             post_avg=1,
-            delta=self.onset_delta,
+            delta=delta,
             units='frames'
         )
         return librosa.frames_to_time(onset_frames, sr=sr)
@@ -1234,24 +1435,38 @@ class LibrosaAnalyzer:
         # Compute onset strength envelope (used by spectral detection)
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         
+        # Calculate adaptive delta if enabled
+        if self.adaptive_delta_enabled:
+            adaptive_delta = self._calculate_adaptive_delta(onset_env)
+            print(f"[LibrosaAnalyzer] Adaptive delta: {adaptive_delta:.4f} (base: {self.onset_delta})")
+        else:
+            adaptive_delta = self.onset_delta
+        
         # Primary detection: Spectral flux
-        spectral_onsets = self._detect_onsets_spectral(y, sr, onset_env)
-        print(f"[LibrosaAnalyzer] Spectral flux: {len(spectral_onsets)} onsets (delta={self.onset_delta})")
+        spectral_onsets = self._detect_onsets_spectral(y, sr, onset_env, delta=adaptive_delta)
+        print(f"[LibrosaAnalyzer] Spectral flux: {len(spectral_onsets)} onsets (delta={adaptive_delta:.4f})")
+        
+        # Whisper-guided validation to adjust delta based on expected syllables
+        if self.whisper_validation_enabled:
+            onset_times, final_delta = self._validate_with_whisper(
+                y, sr, onset_env, len(spectral_onsets), adaptive_delta
+            )
+        else:
+            onset_times = spectral_onsets.tolist()
+            final_delta = adaptive_delta
         
         # Secondary detection: Energy-based (FALLBACK only)
-        # Only use if spectral detection found very few onsets (< 3)
+        # Only use if detection found very few onsets (< 3)
         # This prevents over-detection while providing safety net for near-silence
-        if self.use_energy_detection and len(spectral_onsets) < 3:
+        if self.use_energy_detection and len(onset_times) < 3:
             energy_onsets = self._detect_onsets_energy(y, sr)
             print(f"[LibrosaAnalyzer] Energy-based (fallback): {len(energy_onsets)} onsets")
             
             # Merge and deduplicate
-            onset_times = self._merge_onsets(spectral_onsets, energy_onsets)
+            onset_times = self._merge_onsets(np.array(onset_times), energy_onsets)
             print(f"[LibrosaAnalyzer] Merged (deduped): {len(onset_times)} onsets")
-        else:
-            onset_times = spectral_onsets.tolist()
-            if self.use_energy_detection:
-                print(f"[LibrosaAnalyzer] Energy detection skipped (spectral found {len(spectral_onsets)} onsets)")
+        elif self.use_energy_detection:
+            print(f"[LibrosaAnalyzer] Energy detection skipped (found {len(onset_times)} onsets)")
         
         return AnalysisResult(
             tempo=tempo,
@@ -1275,6 +1490,8 @@ class PivotFormatter:
     - Sustain detection via duration thresholds
     - Phonetic analysis via Allosaurus (IPA extraction)
     - Automatic segment splitting for long segments
+    - Minimum segment duration filtering
+    - Configurable breath filter thresholds
     """
     
     def __init__(
@@ -1309,15 +1526,21 @@ class PivotFormatter:
         self.sustain_threshold = sustain_threshold
         self.phonetic_analyzer = phonetic_analyzer
         
-        # Load max_segment_duration from config if not provided
-        if max_segment_duration is None:
-            try:
-                from config import config
-                self.max_segment_duration = config.MAX_SEGMENT_DURATION
-            except ImportError:
-                self.max_segment_duration = 0.5
-        else:
-            self.max_segment_duration = max_segment_duration
+        # Load configuration
+        try:
+            from config import config
+            self.max_segment_duration = max_segment_duration if max_segment_duration else config.MAX_SEGMENT_DURATION
+            self.min_segment_duration = config.MIN_SEGMENT_DURATION
+            self.breath_filter_energy_ratio = config.BREATH_FILTER_ENERGY_RATIO
+            self.breath_filter_max_duration = config.BREATH_FILTER_MAX_DURATION
+            self.whisper_validation_enabled = config.WHISPER_VALIDATION_ENABLED
+        except ImportError:
+            # Fallback defaults
+            self.max_segment_duration = max_segment_duration if max_segment_duration else 0.5
+            self.min_segment_duration = 0.08
+            self.breath_filter_energy_ratio = 0.15
+            self.breath_filter_max_duration = 0.15
+            self.whisper_validation_enabled = True
     
     def _find_energy_valleys(
         self,
@@ -1474,6 +1697,56 @@ class PivotFormatter:
             print(f"[PivotFormatter] Split {split_count} long segments -> {len(new_onsets)} total segments")
         
         return new_onsets, new_durations
+    
+    def _filter_short_segments(
+        self,
+        onset_times: list[float],
+        durations: list[float]
+    ) -> tuple[list[float], list[float]]:
+        """
+        Filter/merge segments shorter than minimum syllable duration.
+        
+        Short segments are merged with the following segment to prevent
+        micro-segments from causing over-detection.
+        
+        Args:
+            onset_times: Segment start times.
+            durations: Segment durations.
+            
+        Returns:
+            Tuple of (filtered_onset_times, filtered_durations).
+        """
+        if len(onset_times) <= 1:
+            return onset_times, durations
+        
+        filtered_onsets = []
+        filtered_durations = []
+        merged_count = 0
+        
+        i = 0
+        while i < len(onset_times):
+            onset = onset_times[i]
+            duration = durations[i]
+            
+            # Check if this segment is too short
+            if duration < self.min_segment_duration and i < len(onset_times) - 1:
+                # Merge with next segment: keep this onset, extend duration
+                next_duration = durations[i + 1]
+                gap = onset_times[i + 1] - (onset + duration)  # gap between segments
+                combined_duration = duration + gap + next_duration
+                filtered_onsets.append(onset)
+                filtered_durations.append(combined_duration)
+                merged_count += 1
+                i += 2  # Skip the next segment (already merged)
+            else:
+                filtered_onsets.append(onset)
+                filtered_durations.append(duration)
+                i += 1
+        
+        if merged_count > 0:
+            print(f"[PivotFormatter] Merged {merged_count} short segments (<{self.min_segment_duration}s)")
+        
+        return filtered_onsets, filtered_durations
     
     def _filter_low_energy_segments(
         self,
@@ -1754,8 +2027,16 @@ class PivotFormatter:
         # Split long segments at energy valleys (prevents multi-syllable segments)
         onset_times, durations = self._split_long_segments(onset_times, durations, y, sr)
         
+        # Filter out very short segments (prevents micro-segment over-detection)
+        onset_times, durations = self._filter_short_segments(onset_times, durations)
+        
         # Filter out low-energy segments (Issue #2: breaths and noise)
-        onset_times, durations = self._filter_low_energy_segments(onset_times, durations, y, sr)
+        # Uses configurable thresholds from .env
+        onset_times, durations = self._filter_low_energy_segments(
+            onset_times, durations, y, sr,
+            min_energy_ratio=self.breath_filter_energy_ratio,
+            max_short_duration=self.breath_filter_max_duration
+        )
         
         # Calculate RMS amplitude for each segment
         rms_values = []

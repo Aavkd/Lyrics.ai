@@ -1,7 +1,7 @@
 # 📊 Flow-to-Lyrics: Project Status Report
 
-**Last Updated**: 2025-12-28  
-**Version**: MVP - English Only (Post Phase D - Full-Audio Whisper)  
+**Last Updated**: 2025-12-29  
+**Version**: MVP - English Only (Post Phase D - Full-Audio Whisper + Syllable Validation)  
 **Objective**: Transform informal vocal flows ("yaourt") into coherent rap/song lyrics with strict rhythmic precision and human validation.
 
 ---
@@ -148,15 +148,19 @@ Users can only:
 - `prompts/system_instruction.md` → System prompt
 - `prompts/user_template.md` → User template with `{{pitch_guidance}}`
 
-**Test Results** (Precision Tuning - 2025-12-28):
+**Test Results** (Syllable Detection Overhaul - 2025-12-29):
 
 | Test File | Expected Syllables | Detected | Error |
 |-----------|-------------------|----------|-------|
-| 3_syllabes(sustained)_test.mp3 | 3 | 3 | ✓ 0 |
-| 3_syllabes_test.mp3 | 3 | 3 | ✓ 0 |
-| 5_syllabes_test.mp3 | 5 | 5 | ✓ 0 |
-| 10_syllabes_test.mp3 | 10 | 11 | +1 |
-| **test_audio_2-1.m4a** | **6** | **6** | **✓ 0** |
+| talk_to_me_i_said_what.m4a | 6 | 6 | ✓ 0 |
+| 99_problems.m4a | 5 | 4 | -1 |
+| everybody_equal.m4a | 6 | 5 | -1 |
+| mumble_on_this_beat.m4a | 5 | 5 | ✓ 0 |
+| trying_to_take_my_time.m4a | 6 | 5 | -1 |
+| oh_ma_oh_ma_on_my_tec_nine.m4a | 8 | 10 | +2 |
+| what_bout_you.m4a | 3 | 3 | ✓ 0 |
+
+> **Result:** 3/7 perfect, 6/7 acceptable (≤1 error). Improved via Whisper-guided validation.
 
 ---
 
@@ -270,14 +274,20 @@ The current waveform overlay is merely functional. The target design needs:
 
 ## ⚙️ Syllable Detection Configuration
 
-As of 2025-12-28, onset detection parameters are configurable via `.env`:
+As of 2025-12-29, onset detection includes **adaptive thresholding** and **Whisper-guided validation**:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ONSET_DELTA` | `0.05` | Detection sensitivity (lower = more sensitive) |
+| `ONSET_DELTA` | `0.04` | Base detection sensitivity (lower = more sensitive) |
 | `ONSET_USE_ENERGY` | `true` | Enable energy-based fallback detection |
 | `MAX_SEGMENT_DURATION` | `1.0` | Max segment length before auto-splitting |
 | `ONSET_WAIT` | `1` | Min frames between onsets |
+| `ADAPTIVE_DELTA_ENABLED` | `true` | **NEW** - Auto-adjust delta per-file |
+| `ADAPTIVE_DELTA_FALLBACK` | `true` | Use ONSET_DELTA as bound |
+| `MIN_SEGMENT_DURATION` | `0.08` | **NEW** - Merge segments shorter than 80ms |
+| `BREATH_FILTER_ENERGY_RATIO` | `0.15` | Energy threshold for breath filtering |
+| `BREATH_FILTER_MAX_DURATION` | `0.15` | Duration threshold for breath filtering |
+| `WHISPER_VALIDATION_ENABLED` | `true` | **NEW** - Whisper-guided syllable validation |
 
 ## ⚙️ Phonetic Analysis Configuration (Phase C)
 
@@ -445,9 +455,9 @@ Lyrics.ai/
 | BPM variance ~5% | `LibrosaAnalyzer.analyze()` | Medium | May need prior estimation |
 | Mock Demucs only | `DemucsProcessor` | Medium | Real processing needs GPU |
 | Single block rendering | `AudioEditor.tsx` | Low | Only `blocks[0]` displayed |
-| 10-syllable file +1 error | `test_precision_tuning.py` | Low | Edge case in onset detection |
+| `oh_ma_oh_ma` +2 error | Syllable detection | Low | Whisper detects 9 syllables vs expected 8 |
 | Frontend not connected to generation | `frontend/` | High | No lyric generation UI |
 
 ---
 
-*This document was last updated by analyzing the project codebase on 2025-12-28.*
+*This document was last updated by analyzing the project codebase on 2025-12-29.*

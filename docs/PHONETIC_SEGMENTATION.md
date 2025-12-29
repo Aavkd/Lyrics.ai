@@ -1,7 +1,7 @@
 # 🔊 Phonetic Analysis & Syllable Segmentation
 
-**Last Updated**: 2025-12-28  
-**Version**: 1.0 (Phase D - Full-Audio Whisper)  
+**Last Updated**: 2025-12-29  
+**Version**: 1.1 (Phase D - Full-Audio Whisper + Syllable Validation)  
 **Context**: Technical documentation for the phonetic analysis and syllable alignment system.
 
 ---
@@ -125,6 +125,11 @@ WHISPER_USE_FULL_AUDIO=true
 
 # Enable phonetic fallback classification
 PHONETIC_FALLBACK_ENABLED=true
+
+# Syllable detection validation (NEW)
+WHISPER_VALIDATION_ENABLED=true
+ADAPTIVE_DELTA_ENABLED=true
+MIN_SEGMENT_DURATION=0.08
 ```
 
 ---
@@ -146,9 +151,24 @@ PHONETIC_FALLBACK_ENABLED=true
 | Method | Purpose |
 |--------|---------|
 | `transcribe_full_audio(y, sr)` | Transcribe entire audio with word timestamps |
+| `count_syllables_in_words(words)` | **NEW** - Count syllables using g2p_en |
 | `_words_to_syllables_with_timing(words)` | Split words into syllables with estimated timing |
 | `_align_words_to_segments(words, onsets, durations)` | Sequential syllable-to-segment assignment |
 | `analyze_segments_full_audio(y, sr, onsets, durations)` | High-level API combining all steps |
+
+### LibrosaAnalyzer (`audio_engine.py`)
+
+| Method | Purpose |
+|--------|---------|
+| `analyze(audio_path)` | Main entry point for audio analysis |
+| `_calculate_adaptive_delta(onset_env)` | **NEW** - Calculate per-file delta using CV |
+| `_validate_with_whisper(y, sr, ...)` | **NEW** - Whisper-guided syllable validation |
+
+### Module-Level Functions
+
+| Function | Purpose |
+|----------|---------|
+| `get_whisper_analyzer()` | **NEW** - Singleton accessor for cached Whisper model |
 
 ### PhoneticAnalyzer (`audio_engine.py`)
 
